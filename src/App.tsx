@@ -95,26 +95,55 @@ function App() {
             );
 
             try {
-                // 1. Lê o arquivo e recebe TODAS as abas válidas (Ex: Matrix, Lua Nova...)
+                // 1. Lê e valida estrutura básica
                 const sheets = await readExcelFile(item.file);
+                let itemHasMissingProjectError = false;
 
-                let fileRowsProcessed = 0;
+                // 2. Verifica se precisamos pedir o código manual ANTES de processar
+                // Se NÃO temos código manual, precisamos garantir que TODAS as abas tenham a coluna PROJETO
+                if (!item.manualCode || item.manualCode.trim() === '') {
+                    const missingProjectColumn = sheets.some(sheet => {
+                        const headers = Object.keys(sheet.rows[0] || {}).map(k => k.toLowerCase());
+                        return !headers.includes('projeto');
+                    });
 
-                // 2. Processa cada aba individualmente
+                    if (missingProjectColumn) {
+                        itemHasMissingProjectError = true;
+                    }
+                }
+
+                if (itemHasMissingProjectError) {
+                    setFileQueue(prev =>
+                        prev.map((it, idx) =>
+                            idx === i
+                                ? {
+                                    ...it,
+                                    status: 'error',
+                                    errorMessage: '⚠️ Coluna PROJETO ausente. Digite o código.'
+                                }
+                                : it
+                        )
+                    );
+                    hasErrors = true;
+                    continue; // Pula o processamento deste arquivo até o usuário corrigir
+                }
+
+                // 3. Processamento Real
+                const fileRows: ProcessedRow[] = [];
                 sheets.forEach(sheet => {
                     const result = processSheetData(
                         sheet.rows,
                         item.file.name,
-                        sheet.sheetName, // Passa o nome real da aba (ex: "LUA NOVA")
+                        sheet.sheetName,
                         item.manualCode,
                         cutoffDate
                     );
-
                     if (result.rows.length) {
-                        allData.push(...result.rows);
-                        fileRowsProcessed += result.rows.length;
+                        fileRows.push(...result.rows);
                     }
                 });
+
+                allData.push(...fileRows);
 
                 setFileQueue(prev =>
                     prev.map((it, idx) =>
@@ -122,7 +151,7 @@ function App() {
                             ? {
                                 ...it,
                                 status: 'success',
-                                errorMessage: '' // Remove erro se houver
+                                errorMessage: ''
                             }
                             : it
                     )
@@ -136,7 +165,7 @@ function App() {
                 setFileQueue(prev =>
                     prev.map((it, idx) =>
                         idx === i
-                            ? { ...it, status: 'error', errorMessage: errorMsg.substring(0, 30) }
+                            ? { ...it, status: 'error', errorMessage: errorMsg.substring(0, 40) }
                             : it
                     )
                 );
@@ -148,7 +177,7 @@ function App() {
             setUploadStatus(`Concluído! ${allData.length} linhas processadas.`);
         } else {
             if (allData.length > 0) setProcessedData(allData);
-            setUploadStatus('Processamento finalizado com alguns erros. Verifique a lista.');
+            setUploadStatus('Atenção: Resolva as pendências de PROJETO indicadas.');
         }
         setIsProcessing(false);
     };
