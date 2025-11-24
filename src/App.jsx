@@ -9,9 +9,22 @@ function App() {
     const [isProcessing, setIsProcessing] = useState(false);
     const [isDragOver, setIsDragOver] = useState(false);
     const [uploadStatus, setUploadStatus] = useState('');
+    const [processProgress, setProcessProgress] = useState({ current: 0, total: 0 });
 
     const handleFileUpload = (e) => {
         const files = Array.from(e.target.files || e.dataTransfer.files);
+
+        // Validate file types
+        const validExtensions = ['.xlsx', '.xls', '.csv'];
+        const invalidFiles = files.filter(f =>
+            !validExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
+        );
+
+        if (invalidFiles.length > 0) {
+            setUploadStatus(`⚠️ Arquivos inválidos detectados. Apenas .xlsx, .xls e .csv são permitidos.`);
+            return;
+        }
+
         if (files.length > 0) {
             const newFiles = files.map(f => ({
                 file: f,
@@ -38,6 +51,7 @@ function App() {
     const runBatch = async () => {
         if (fileQueue.length === 0) return;
         setIsProcessing(true);
+        setProcessProgress({ current: 0, total: fileQueue.length });
         setUploadStatus('Iniciando...');
 
         const allData = [];
@@ -47,11 +61,12 @@ function App() {
 
         for (let i = 0; i < fileQueue.length; i++) {
             const item = fileQueue[i];
+            setProcessProgress({ current: i + 1, total: fileQueue.length });
 
             try {
                 currentQueue[i] = { ...item, status: 'processing' };
                 setFileQueue([...currentQueue]);
-                setUploadStatus(`Lendo arquivo: ${item.file.name}...`);
+                setUploadStatus(`Processando ${i + 1}/${fileQueue.length}: ${item.file.name}...`);
 
                 await new Promise(r => setTimeout(r, 50));
 
@@ -86,10 +101,10 @@ function App() {
                     }
 
                     const sheetJson = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-                    const rows = processSheetData(sheetJson, item.file.name, sheetName, item.manualCode);
+                    const result = processSheetData(sheetJson, item.file.name, sheetName, item.manualCode);
 
-                    if (rows.length > 0) {
-                        allData.push(...rows);
+                    if (result.rows.length > 0) {
+                        allData.push(...result.rows);
                         validSheetsFound++;
                     }
                 }
@@ -251,6 +266,11 @@ function App() {
                     <div className={`flex items-center gap-3 px-4 py-2 rounded-full shadow-sm border transition-colors ${processedData.length === 0 && fileQueue.some(f => f.status === 'error') ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-100 text-gray-600'}`}>
                         <Icon name="Info" size={16} />
                         <span className="text-sm font-medium">{uploadStatus || "Aguardando arquivos..."}</span>
+                        {isProcessing && processProgress.total > 0 && (
+                            <span className="ml-2 text-xs font-bold bg-blue-100 text-blue-600 px-2 py-1 rounded">
+                                {processProgress.current}/{processProgress.total}
+                            </span>
+                        )}
                     </div>
 
                     <div className="flex gap-3">
@@ -283,6 +303,44 @@ function App() {
                         )}
                     </div>
                 </div>
+
+                {processedData.length > 0 && (
+                    <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100 animate-fade-in-up mb-8">
+                        <div className="flex justify-between items-center mb-4">
+                            <h3 className="text-lg font-bold text-gray-900">Preview dos Dados Processados</h3>
+                            <span className="text-sm text-gray-500">{processedData.length} linhas</span>
+                        </div>
+                        <div className="overflow-x-auto rounded-lg border border-gray-200">
+                            <table className="min-w-full divide-y divide-gray-200 text-sm">
+                                <thead className="bg-gray-50">
+                                    <tr>
+                                        {FINAL_HEADERS.slice(0, 8).map(header => (
+                                            <th key={header} className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">
+                                                {header}
+                                            </th>
+                                        ))}
+                                    </tr>
+                                </thead>
+                                <tbody className="bg-white divide-y divide-gray-200">
+                                    {processedData.slice(0, 10).map((row, idx) => (
+                                        <tr key={idx} className="hover:bg-gray-50">
+                                            {FINAL_HEADERS.slice(0, 8).map(header => (
+                                                <td key={header} className="px-4 py-3 whitespace-nowrap text-gray-700">
+                                                    {row[header] || '-'}
+                                                </td>
+                                            ))}
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                        {processedData.length > 10 && (
+                            <p className="text-xs text-gray-400 mt-3 text-center">
+                                Mostrando 10 de {processedData.length} linhas. Baixe o Excel para ver tudo.
+                            </p>
+                        )}
+                    </div>
+                )}
             </main>
         </div>
     );
