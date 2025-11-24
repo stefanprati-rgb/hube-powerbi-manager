@@ -2,13 +2,9 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import Icon from './components/Icon';
-
-// --- IMPORTS CORRIGIDOS ---
 import { FINAL_HEADERS } from './config/constants';
 import { processSheetData } from './modules/sheetProcessor';
 import { readExcelFile } from './utils/excelHelpers';
-// --------------------------
-
 import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
 
 function App() {
@@ -92,7 +88,6 @@ function App() {
                 `Processando ${i + 1}/${fileQueue.length}: ${item.file.name}...`
             );
 
-            /* Atualiza status para processing */
             setFileQueue(prev =>
                 prev.map((it, idx) =>
                     idx === i ? { ...it, status: 'processing' } : it
@@ -100,31 +95,34 @@ function App() {
             );
 
             try {
-                // --- NOVA LÓGICA DE LEITURA ---
-                // Usa o helper inteligente para achar a aba e cabeçalho corretos
-                const sheetData = await readExcelFile(item.file);
+                // 1. Lê o arquivo e recebe TODAS as abas válidas (Ex: Matrix, Lua Nova...)
+                const sheets = await readExcelFile(item.file);
 
-                // Processa os dados usando as regras de negócio
-                const result = processSheetData(
-                    sheetData,
-                    item.file.name,
-                    "Dados Importados", // Nome genérico pois o readExcelFile resolve a aba
-                    item.manualCode,
-                    cutoffDate
-                );
+                let fileRowsProcessed = 0;
 
-                if (result.rows.length) {
-                    allData.push(...result.rows);
-                }
+                // 2. Processa cada aba individualmente
+                sheets.forEach(sheet => {
+                    const result = processSheetData(
+                        sheet.rows,
+                        item.file.name,
+                        sheet.sheetName, // Passa o nome real da aba (ex: "LUA NOVA")
+                        item.manualCode,
+                        cutoffDate
+                    );
 
-                /* Atualiza status para sucesso */
+                    if (result.rows.length) {
+                        allData.push(...result.rows);
+                        fileRowsProcessed += result.rows.length;
+                    }
+                });
+
                 setFileQueue(prev =>
                     prev.map((it, idx) =>
                         idx === i
                             ? {
                                 ...it,
                                 status: 'success',
-                                errorMessage: ''
+                                errorMessage: '' // Remove erro se houver
                             }
                             : it
                     )
@@ -149,7 +147,6 @@ function App() {
             setProcessedData(allData);
             setUploadStatus(`Concluído! ${allData.length} linhas processadas.`);
         } else {
-            // Se houve erros, ainda mostramos o que foi processado com sucesso
             if (allData.length > 0) setProcessedData(allData);
             setUploadStatus('Processamento finalizado com alguns erros. Verifique a lista.');
         }
