@@ -1,8 +1,14 @@
-// App.tsx
+// src/App.tsx
 import React, { useState, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import Icon from './components/Icon';
-import { processSheetData, FINAL_HEADERS } from './utils/excelHelpers';
+
+// --- IMPORTS CORRIGIDOS ---
+import { FINAL_HEADERS } from './config/constants';
+import { processSheetData } from './modules/sheetProcessor';
+import { readExcelFile } from './utils/excelHelpers';
+// --------------------------
+
 import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
 
 function App() {
@@ -79,7 +85,6 @@ function App() {
         const allData: ProcessedRow[] = [];
         let hasErrors = false;
 
-        /* FIX-6: nunca mutar estado diretamente */
         for (let i = 0; i < fileQueue.length; i++) {
             const item = fileQueue[i];
             setProcessProgress({ current: i + 1, total: fileQueue.length });
@@ -87,105 +92,53 @@ function App() {
                 `Processando ${i + 1}/${fileQueue.length}: ${item.file.name}...`
             );
 
-            /* FIX-1: leitura sob demanda + desativa excessos */
+            /* Atualiza status para processing */
+            setFileQueue(prev =>
+                prev.map((it, idx) =>
+                    idx === i ? { ...it, status: 'processing' } : it
+                )
+            );
+
             try {
-                /* atualiza fila com status */
-                setFileQueue(prev =>
-                    prev.map((it, idx) =>
-                        idx === i ? { ...it, status: 'processing' } : it
-                    )
+                // --- NOVA LÓGICA DE LEITURA ---
+                // Usa o helper inteligente para achar a aba e cabeçalho corretos
+                const sheetData = await readExcelFile(item.file);
+
+                // Processa os dados usando as regras de negócio
+                const result = processSheetData(
+                    sheetData,
+                    item.file.name,
+                    "Dados Importados", // Nome genérico pois o readExcelFile resolve a aba
+                    item.manualCode,
+                    cutoffDate
                 );
 
-                const ab = await item.file.arrayBuffer();
-                /* FIX-2: desliga fórmulas / estilos / html */
-                const wb = XLSX.read(ab, {
-                    type: 'array',
-                    cellFormula: false,
-                    cellHTML: false,
-                    cellStyles: false,
-                    /* FIX-3: tenta adivinhar separador CSV */
-                    FS: item.file.name.toLowerCase().endsWith('.csv') ? ';' : undefined,
-                    codepage: 65001
-                });
-
-                let validSheetsFound = 0;
-                let itemErrors = false;
-
-                /* FIX-5: limita quantidade de abas processadas */
-                const maxSheets = Math.min(wb.SheetNames.length, 50);
-                for (let s = 0; s < maxSheets; s++) {
-                    const sheetName = wb.SheetNames[s];
-                    setUploadStatus(
-                        `Analisando: ${item.file.name} • Aba: ${sheetName} (${s + 1}/${maxSheets})`
-                    );
-
-                    const ws = wb.Sheets[sheetName];
-                    const headerData = XLSX.utils.sheet_to_json(ws, {
-                        header: 1,
-                        range: 0,
-                        defval: ''
-                    }) as string[][];
-
-                    if (!headerData.length) continue;
-
-                    const headers = headerData[0].map(h => String(h).trim());
-                    const headersLower = headers.map(h => h.toLowerCase());
-
-                    const keyCols = ['instalação', 'valor', 'referência', 'projeto', 'status'];
-                    const matchCount = headersLower.filter(h =>
-                        keyCols.some(k => h.includes(k))
-                    ).length;
-
-                    if (matchCount < 2) continue;
-
-                    const hasProjectColumn = headersLower.includes('projeto');
-                    if (
-                        !hasProjectColumn &&
-                        (!item.manualCode || item.manualCode.trim() === '')
-                    ) {
-                        itemErrors = true;
-                        continue;
-                    }
-
-                    const sheetJson = XLSX.utils.sheet_to_json(ws, { defval: '' });
-                    /* FIX-4: garante formato de data consistente */
-                    const result = processSheetData(
-                        sheetJson,
-                        item.file.name,
-                        sheetName,
-                        item.manualCode,
-                        cutoffDate
-                    );
-
-                    if (result.rows.length) {
-                        allData.push(...result.rows);
-                        validSheetsFound++;
-                    }
+                if (result.rows.length) {
+                    allData.push(...result.rows);
                 }
 
-                /* atualiza status do item */
+                /* Atualiza status para sucesso */
                 setFileQueue(prev =>
                     prev.map((it, idx) =>
                         idx === i
                             ? {
                                 ...it,
-                                status: itemErrors ? 'error' : 'success',
-                                errorMessage: itemErrors
-                                    ? '⚠️ Aba sem Projeto detectada'
-                                    : ''
+                                status: 'success',
+                                errorMessage: ''
                             }
                             : it
                     )
                 );
 
-                if (itemErrors) hasErrors = true;
-            } catch (err) {
+            } catch (err: any) {
                 console.error(err);
                 hasErrors = true;
+                const errorMsg = err.message || 'Erro desconhecido';
+
                 setFileQueue(prev =>
                     prev.map((it, idx) =>
                         idx === i
-                            ? { ...it, status: 'error', errorMessage: 'Erro na leitura' }
+                            ? { ...it, status: 'error', errorMessage: errorMsg.substring(0, 30) }
                             : it
                     )
                 );
@@ -196,8 +149,9 @@ function App() {
             setProcessedData(allData);
             setUploadStatus(`Concluído! ${allData.length} linhas processadas.`);
         } else {
-            setProcessedData([]);
-            setUploadStatus('Atenção: Resolva os erros de Projeto pendentes.');
+            // Se houve erros, ainda mostramos o que foi processado com sucesso
+            if (allData.length > 0) setProcessedData(allData);
+            setUploadStatus('Processamento finalizado com alguns erros. Verifique a lista.');
         }
         setIsProcessing(false);
     };
@@ -239,7 +193,6 @@ function App() {
         if (!confirm('Limpar tudo?')) return;
         setFileQueue([]);
         setProcessedData([]);
-        /* FIX-9: limpa também a mensagem */
         setUploadStatus('');
     };
 
