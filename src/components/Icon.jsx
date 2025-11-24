@@ -10,7 +10,8 @@ import {
     Check,
     X,
     Trash,
-    AlertTriangle
+    AlertTriangle,
+    Calendar
 } from 'lucide-react';
 
 // Mapping for compatibility if we want to keep using string names, 
@@ -30,7 +31,8 @@ const Icon = ({ name, size = 20, className }) => {
         Check,
         X,
         Trash,
-        AlertTriangle
+        AlertTriangle,
+        Calendar
     };
 
     const LucideIcon = icons[name];

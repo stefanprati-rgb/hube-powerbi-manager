@@ -10,6 +10,7 @@ function App() {
     const [isDragOver, setIsDragOver] = useState(false);
     const [uploadStatus, setUploadStatus] = useState('');
     const [processProgress, setProcessProgress] = useState({ current: 0, total: 0 });
+    const [cutoffDate, setCutoffDate] = useState('2025-06-01');
 
     const handleFileUpload = (e) => {
         const files = Array.from(e.target.files || e.dataTransfer.files);
@@ -101,7 +102,7 @@ function App() {
                     }
 
                     const sheetJson = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-                    const result = processSheetData(sheetJson, item.file.name, sheetName, item.manualCode);
+                    const result = processSheetData(sheetJson, item.file.name, sheetName, item.manualCode, cutoffDate);
 
                     if (result.rows.length > 0) {
                         allData.push(...result.rows);
@@ -174,7 +175,20 @@ function App() {
                         <h1 className="text-xl font-bold text-gray-900">Power BI Manager</h1>
                     </div>
                 </div>
-                <div className="flex gap-3">
+                <div className="flex items-center gap-4">
+                    <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
+                        <Icon name="Calendar" size={16} className="text-gray-400" />
+                        <div className="flex flex-col">
+                            <label className="text-[9px] font-bold uppercase text-gray-400 mb-0.5">Data de Corte</label>
+                            <input
+                                type="date"
+                                value={cutoffDate}
+                                onChange={(e) => setCutoffDate(e.target.value)}
+                                className="text-sm font-semibold text-gray-900 border-none outline-none bg-transparent cursor-pointer"
+                                title="Apenas dados a partir desta data serão processados"
+                            />
+                        </div>
+                    </div>
                     {fileQueue.length > 0 && (
                         <button onClick={() => { if (confirm("Limpar tudo?")) { setFileQueue([]); setProcessedData([]); } }} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all" title="Limpar Lista">
                             <Icon name="Trash" size={20} />
