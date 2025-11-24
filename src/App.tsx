@@ -1,10 +1,12 @@
-import React, { useState, useCallback } from 'react';
+// App.tsx
+import React, { useState, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import Icon from './components/Icon';
 import { processSheetData, FINAL_HEADERS } from './utils/excelHelpers';
 import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
 
 function App() {
+    /* ---------- state ---------- */
     const [fileQueue, setFileQueue] = useState<FileQueueItem[]>([]);
     const [processedData, setProcessedData] = useState<ProcessedRow[]>([]);
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
@@ -13,120 +15,181 @@ function App() {
     const [processProgress, setProcessProgress] = useState<ProcessingProgress>({ current: 0, total: 0 });
     const [cutoffDate, setCutoffDate] = useState<string>('2025-06-01');
 
-    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent<HTMLDivElement>) => {
-        const files = Array.from(e.target.files || e.dataTransfer.files);
+    /* ---------- helpers ---------- */
+    const validExtensions = useMemo(() => ['.xlsx', '.xls', '.csv'], []);
 
-        // Validate file types
-        const validExtensions = ['.xlsx', '.xls', '.csv'];
-        const invalidFiles = files.filter(f =>
-            !validExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
+    /* ---------- file handling ---------- */
+    const normalizeFiles = (fileList: FileList | File[]): File[] =>
+        Array.from(fileList).filter(f =>
+            validExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
         );
 
-        if (invalidFiles.length > 0) {
-            setUploadStatus(`⚠️ Arquivos inválidos detectados. Apenas .xlsx, .xls e .csv são permitidos.`);
-            return;
-        }
+    const addFilesToQueue = (files: File[]) => {
+        if (!files.length) return;
+        const newItems: FileQueueItem[] = files.map(f => ({
+            file: f,
+            id: Date.now() + Math.random(),
+            manualCode: '',
+            status: 'idle',
+            errorMessage: ''
+        }));
+        setFileQueue(prev => [...prev, ...newItems]);
+        setUploadStatus(`${files.length} arquivo(s) adicionado(s).`);
+    };
 
-        if (files.length > 0) {
-            const newFiles = files.map(f => ({
-                file: f,
-                id: Date.now() + Math.random(),
-                manualCode: '',
-                status: 'idle',
-                errorMessage: ''
-            }));
-            setFileQueue(prev => [...prev, ...newFiles]);
-            setUploadStatus(`${files.length} arquivo(s) adicionado(s).`);
+    const handleFileUpload = (
+        e: React.ChangeEvent<HTMLInputElement> | React.DragEvent<HTMLDivElement>
+    ) => {
+        const list = 'dataTransfer' in e ? e.dataTransfer.files : e.target.files;
+        if (!list) return;
+
+        const files = normalizeFiles(list);
+        const invalid = Array.from(list).filter(
+            f => !validExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
+        );
+
+        if (invalid.length) {
+            setUploadStatus(
+                `⚠️ Arquivos inválidos detectados. Apenas .xlsx, .xls e .csv são permitidos.`
+            );
+            if (!files.length) return;
         }
+        addFilesToQueue(files);
     };
 
     const updateManualCode = (id: number, code: string) => {
-        setFileQueue(prev => prev.map(item =>
-            item.id === id ? { ...item, manualCode: code, status: 'idle', errorMessage: '' } : item
-        ));
+        setFileQueue(prev =>
+            prev.map(it =>
+                it.id === id ? { ...it, manualCode: code, status: 'idle', errorMessage: '' } : it
+            )
+        );
     };
 
     const removeFile = (id: number) => {
-        setFileQueue(prev => prev.filter(item => item.id !== id));
+        setFileQueue(prev => prev.filter(it => it.id !== id));
     };
 
+    /* ---------- batch processing ---------- */
     const runBatch = async () => {
-        if (fileQueue.length === 0) return;
+        if (!fileQueue.length) return;
         setIsProcessing(true);
         setProcessProgress({ current: 0, total: fileQueue.length });
         setUploadStatus('Iniciando...');
 
-        const allData = [];
+        const allData: ProcessedRow[] = [];
         let hasErrors = false;
 
-        let currentQueue = [...fileQueue];
-
+        /* FIX-6: nunca mutar estado diretamente */
         for (let i = 0; i < fileQueue.length; i++) {
             const item = fileQueue[i];
             setProcessProgress({ current: i + 1, total: fileQueue.length });
+            setUploadStatus(
+                `Processando ${i + 1}/${fileQueue.length}: ${item.file.name}...`
+            );
 
+            /* FIX-1: leitura sob demanda + desativa excessos */
             try {
-                currentQueue[i] = { ...item, status: 'processing' };
-                setFileQueue([...currentQueue]);
-                setUploadStatus(`Processando ${i + 1}/${fileQueue.length}: ${item.file.name}...`);
+                /* atualiza fila com status */
+                setFileQueue(prev =>
+                    prev.map((it, idx) =>
+                        idx === i ? { ...it, status: 'processing' } : it
+                    )
+                );
 
-                await new Promise(r => setTimeout(r, 50));
-
-                const data = await item.file.arrayBuffer();
-                const workbook = XLSX.read(data);
+                const ab = await item.file.arrayBuffer();
+                /* FIX-2: desliga fórmulas / estilos / html */
+                const wb = XLSX.read(ab, {
+                    type: 'array',
+                    cellFormula: false,
+                    cellHTML: false,
+                    cellStyles: false,
+                    /* FIX-3: tenta adivinhar separador CSV */
+                    FS: item.file.name.toLowerCase().endsWith('.csv') ? ';' : undefined,
+                    codepage: 65001
+                });
 
                 let validSheetsFound = 0;
                 let itemErrors = false;
 
-                for (const sheetName of workbook.SheetNames) {
-                    setUploadStatus(`Analisando: ${item.file.name} • Aba: ${sheetName}`);
-                    await new Promise(r => setTimeout(r, 10));
+                /* FIX-5: limita quantidade de abas processadas */
+                const maxSheets = Math.min(wb.SheetNames.length, 50);
+                for (let s = 0; s < maxSheets; s++) {
+                    const sheetName = wb.SheetNames[s];
+                    setUploadStatus(
+                        `Analisando: ${item.file.name} • Aba: ${sheetName} (${s + 1}/${maxSheets})`
+                    );
 
-                    const worksheet = workbook.Sheets[sheetName];
+                    const ws = wb.Sheets[sheetName];
+                    const headerData = XLSX.utils.sheet_to_json(ws, {
+                        header: 1,
+                        range: 0,
+                        defval: ''
+                    }) as string[][];
 
-                    const headerData = XLSX.utils.sheet_to_json(worksheet, { header: 1, range: 0, limit: 1 });
-                    if (headerData.length === 0) continue;
+                    if (!headerData.length) continue;
 
                     const headers = headerData[0].map(h => String(h).trim());
                     const headersLower = headers.map(h => h.toLowerCase());
 
-                    const keyColumns = ["instalação", "valor", "referência", "projeto", "status"];
-                    const matchCount = headersLower.filter(h => keyColumns.some(k => h.includes(k))).length;
+                    const keyCols = ['instalação', 'valor', 'referência', 'projeto', 'status'];
+                    const matchCount = headersLower.filter(h =>
+                        keyCols.some(k => h.includes(k))
+                    ).length;
 
                     if (matchCount < 2) continue;
 
-                    const hasProjectColumn = headersLower.includes("projeto");
-
-                    if (!hasProjectColumn && (!item.manualCode || item.manualCode.trim() === "")) {
+                    const hasProjectColumn = headersLower.includes('projeto');
+                    if (
+                        !hasProjectColumn &&
+                        (!item.manualCode || item.manualCode.trim() === '')
+                    ) {
                         itemErrors = true;
                         continue;
                     }
 
-                    const sheetJson = XLSX.utils.sheet_to_json(worksheet, { defval: "" });
-                    const result = processSheetData(sheetJson, item.file.name, sheetName, item.manualCode, cutoffDate);
+                    const sheetJson = XLSX.utils.sheet_to_json(ws, { defval: '' });
+                    /* FIX-4: garante formato de data consistente */
+                    const result = processSheetData(
+                        sheetJson,
+                        item.file.name,
+                        sheetName,
+                        item.manualCode,
+                        cutoffDate
+                    );
 
-                    if (result.rows.length > 0) {
+                    if (result.rows.length) {
                         allData.push(...result.rows);
                         validSheetsFound++;
                     }
                 }
 
-                if (itemErrors) {
-                    hasErrors = true;
-                    currentQueue[i] = { ...item, status: 'error', errorMessage: '⚠️ Aba sem Projeto detectada' };
-                } else if (validSheetsFound === 0) {
-                    currentQueue[i] = { ...item, status: 'success', errorMessage: '' };
-                } else {
-                    currentQueue[i] = { ...item, status: 'success', errorMessage: '' };
-                }
+                /* atualiza status do item */
+                setFileQueue(prev =>
+                    prev.map((it, idx) =>
+                        idx === i
+                            ? {
+                                ...it,
+                                status: itemErrors ? 'error' : 'success',
+                                errorMessage: itemErrors
+                                    ? '⚠️ Aba sem Projeto detectada'
+                                    : ''
+                            }
+                            : it
+                    )
+                );
 
-            } catch (error) {
-                console.error(error);
+                if (itemErrors) hasErrors = true;
+            } catch (err) {
+                console.error(err);
                 hasErrors = true;
-                currentQueue[i] = { ...item, status: 'error', errorMessage: 'Erro na leitura' };
+                setFileQueue(prev =>
+                    prev.map((it, idx) =>
+                        idx === i
+                            ? { ...it, status: 'error', errorMessage: 'Erro na leitura' }
+                            : it
+                    )
+                );
             }
-
-            setFileQueue([...currentQueue]);
         }
 
         if (!hasErrors) {
@@ -136,62 +199,89 @@ function App() {
             setProcessedData([]);
             setUploadStatus('Atenção: Resolva os erros de Projeto pendentes.');
         }
-
         setIsProcessing(false);
     };
 
+    /* ---------- export ---------- */
     const handleExport = () => {
-        if (processedData.length === 0) return;
-        const ws = XLSX.utils.json_to_sheet(processedData, { header: FINAL_HEADERS, skipHeader: false });
+        if (!processedData.length) return;
+        const ws = XLSX.utils.json_to_sheet(processedData, {
+            header: FINAL_HEADERS,
+            skipHeader: false
+        });
         const wb = XLSX.utils.book_new();
-        XLSX.utils.book_append_sheet(wb, ws, "Dados Consolidados");
-        XLSX.writeFile(wb, "Relatorio_Hube_Consolidado.xlsx");
+        XLSX.utils.book_append_sheet(wb, ws, 'Dados Consolidados');
+        XLSX.writeFile(wb, 'Relatorio_Hube_Consolidado.xlsx');
     };
 
-    const onDragOver = useCallback((e) => { e.preventDefault(); setIsDragOver(true); }, []);
-    const onDragLeave = useCallback((e) => { e.preventDefault(); setIsDragOver(false); }, []);
-    const onDrop = useCallback((e) => {
-        e.preventDefault(); setIsDragOver(false);
-        const files = Array.from(e.dataTransfer.files);
-        if (files.length > 0) {
-            const newFiles = files.map(f => ({
-                file: f,
-                id: Date.now() + Math.random(),
-                manualCode: '',
-                status: 'idle',
-                errorMessage: ''
-            }));
-            setFileQueue(prev => [...prev, ...newFiles]);
-            setUploadStatus(`${files.length} arquivo(s) adicionado(s).`);
-        }
+    /* ---------- drag & drop ---------- */
+    const onDragOver = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(true);
     }, []);
+
+    const onDragLeave = useCallback((e: React.DragEvent) => {
+        e.preventDefault();
+        setIsDragOver(false);
+    }, []);
+
+    const onDrop = useCallback(
+        (e: React.DragEvent) => {
+            e.preventDefault();
+            setIsDragOver(false);
+            addFilesToQueue(normalizeFiles(e.dataTransfer.files));
+        },
+        [validExtensions]
+    );
+
+    /* ---------- ui ---------- */
+    const clearAll = () => {
+        if (!confirm('Limpar tudo?')) return;
+        setFileQueue([]);
+        setProcessedData([]);
+        /* FIX-9: limpa também a mensagem */
+        setUploadStatus('');
+    };
 
     return (
         <div className="min-h-screen pb-20 relative">
             <header className="glass-header sticky top-0 z-40 px-6 py-4 flex justify-between items-center mb-8">
                 <div className="flex items-center gap-4">
-                    <img src="https://hube.energy/wp-content/uploads/2024/10/Logo-1.svg" className="h-8 w-auto" alt="Hube Logo" onError={(e) => { e.target.style.display = 'none' }} />
+                    <img
+                        src="https://hube.energy/wp-content/uploads/2024/10/Logo-1.svg"
+                        className="h-8 w-auto"
+                        alt="Hube Logo"
+                        onError={e => ((e.target as HTMLImageElement).style.display = 'none')}
+                    />
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
                     <div>
                         <h1 className="text-xl font-bold text-gray-900">Power BI Manager</h1>
                     </div>
                 </div>
+
                 <div className="flex items-center gap-4">
                     <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
                         <Icon name="Calendar" size={16} className="text-gray-400" />
                         <div className="flex flex-col">
-                            <label className="text-[9px] font-bold uppercase text-gray-400 mb-0.5">Data de Corte</label>
+                            <label className="text-[9px] font-bold uppercase text-gray-400 mb-0.5">
+                                Data de Corte
+                            </label>
                             <input
                                 type="date"
                                 value={cutoffDate}
-                                onChange={(e) => setCutoffDate(e.target.value)}
+                                onChange={e => setCutoffDate(e.target.value)}
                                 className="text-sm font-semibold text-gray-900 border-none outline-none bg-transparent cursor-pointer"
                                 title="Apenas dados a partir desta data serão processados"
                             />
                         </div>
                     </div>
+
                     {fileQueue.length > 0 && (
-                        <button onClick={() => { if (confirm("Limpar tudo?")) { setFileQueue([]); setProcessedData([]); } }} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all" title="Limpar Lista">
+                        <button
+                            onClick={clearAll}
+                            className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"
+                            title="Limpar Lista"
+                        >
                             <Icon name="Trash" size={20} />
                         </button>
                     )}
@@ -202,58 +292,93 @@ function App() {
                 {fileQueue.length > 0 ? (
                     <div className="flex-1 flex flex-col mb-8">
                         <div className="flex justify-between items-center mb-4">
-                            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Fila de Arquivos</h2>
+                            <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">
+                                Fila de Arquivos
+                            </h2>
                             <label className="text-[#00D655] text-sm font-medium cursor-pointer hover:underline flex items-center gap-1">
                                 <Icon name="UploadCloud" size={16} /> Adicionar mais
-                                <input type="file" className="hidden" multiple accept=".xlsx,.xls,.csv" onChange={handleFileUpload} />
+                                <input
+                                    type="file"
+                                    multiple
+                                    accept=".xlsx,.xls,.csv"
+                                    onChange={handleFileUpload}
+                                    className="hidden"
+                                />
                             </label>
                         </div>
 
                         <div className="space-y-3">
-                            {fileQueue.map((item, index) => (
-                                <div key={item.id} className={`
-                      relative bg-white rounded-2xl p-4 flex items-center gap-4 shadow-sm border transition-all duration-200 animate-fade-in-up
-                      ${item.status === 'error' ? 'border-red-400 ring-2 ring-red-100' : 'border-gray-100 hover:shadow-md'}
-                      ${item.status === 'processing' ? 'border-blue-400 ring-2 ring-blue-100' : ''}
-                  `}>
-                                    <div className={`
-                        w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors
-                        ${item.status === 'idle' ? 'bg-gray-100 text-gray-400' : ''}
-                        ${item.status === 'processing' ? 'bg-blue-50 text-blue-500' : ''}
-                        ${item.status === 'success' ? 'bg-[#00D655]/10 text-[#00D655]' : ''}
-                        ${item.status === 'error' ? 'bg-red-100 text-red-500' : ''}
-                      `}>
+                            {fileQueue.map(item => (
+                                <div
+                                    key={item.id}
+                                    className={`
+                    relative bg-white rounded-2xl p-4 flex items-center gap-4 shadow-sm border transition-all duration-200 animate-fade-in-up
+                    ${item.status === 'error' ? 'border-red-400 ring-2 ring-red-100' : 'border-gray-100 hover:shadow-md'}
+                    ${item.status === 'processing' ? 'border-blue-400 ring-2 ring-blue-100' : ''}
+                  `}
+                                >
+                                    <div
+                                        className={`
+                      w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors
+                      ${item.status === 'idle' ? 'bg-gray-100 text-gray-400' : ''}
+                      ${item.status === 'processing' ? 'bg-blue-50 text-blue-500' : ''}
+                      ${item.status === 'success' ? 'bg-[#00D655]/10 text-[#00D655]' : ''}
+                      ${item.status === 'error' ? 'bg-red-100 text-red-500' : ''}
+                    `}
+                                    >
                                         {item.status === 'idle' && <Icon name="FileSpreadsheet" size={20} />}
-                                        {item.status === 'processing' && <div className="animate-spin"><Icon name="Loader2" size={20} /></div>}
+                                        {item.status === 'processing' && (
+                                            <div className="animate-spin">
+                                                <Icon name="Loader2" size={20} />
+                                            </div>
+                                        )}
                                         {item.status === 'success' && <Icon name="Check" size={20} />}
                                         {item.status === 'error' && <Icon name="AlertTriangle" size={20} />}
                                     </div>
 
                                     <div className="flex-1 min-w-0">
-                                        <h3 className={`text-sm font-semibold truncate ${item.status === 'error' ? 'text-red-600' : 'text-[#1D1D1F]'}`}>{item.file.name}</h3>
+                                        <h3
+                                            className={`text-sm font-semibold truncate ${item.status === 'error' ? 'text-red-600' : 'text-[#1D1D1F]'
+                                                }`}
+                                        >
+                                            {item.file.name}
+                                        </h3>
                                         {item.status === 'error' ? (
-                                            <p className="text-xs text-red-500 font-bold mt-0.5 animate-pulse">{item.errorMessage}</p>
+                                            <p className="text-xs text-red-500 font-bold mt-0.5 animate-pulse">
+                                                {item.errorMessage}
+                                            </p>
                                         ) : (
-                                            <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">{(item.file.size / 1024).toFixed(0)} KB</p>
+                                            <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">
+                                                {(item.file.size / 1024).toFixed(0)} KB
+                                            </p>
                                         )}
                                     </div>
 
                                     <div className="flex items-center gap-3 border-l pl-3 border-gray-100">
                                         <div className="flex flex-col items-end group">
-                                            <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${item.status === 'error' ? 'text-red-500' : 'text-gray-300 group-hover:text-[#00D655]'}`}>
+                                            <label
+                                                className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${item.status === 'error' ? 'text-red-500' : 'text-gray-300 group-hover:text-[#00D655]'
+                                                    }`}
+                                            >
                                                 Cód. Projeto
                                             </label>
                                             <input
                                                 type="text"
                                                 className={`ios-input w-28 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none placeholder-gray-300 focus:bg-white
-                                ${item.status === 'error' ? 'border-red-300 bg-red-50 text-red-800 placeholder-red-200 focus:border-red-500 focus:ring-red-200' : 'border-gray-200 text-[#1D1D1F] bg-gray-50'}
-                              `}
-                                                placeholder={item.status === 'error' ? "DIGITE AQUI" : "Opcional"}
+                          ${item.status === 'error'
+                                                        ? 'border-red-300 bg-red-50 text-red-800 placeholder-red-200 focus:border-red-500 focus:ring-red-200'
+                                                        : 'border-gray-200 text-[#1D1D1F] bg-gray-50'
+                                                    }
+                        `}
+                                                placeholder={item.status === 'error' ? 'DIGITE AQUI' : 'Opcional'}
                                                 value={item.manualCode}
-                                                onChange={(e) => updateManualCode(item.id, e.target.value)}
+                                                onChange={e => updateManualCode(item.id, e.target.value)}
                                             />
                                         </div>
-                                        <button onClick={() => removeFile(item.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors rounded-full hover:bg-gray-50">
+                                        <button
+                                            onClick={() => removeFile(item.id)}
+                                            className="p-2 text-gray-300 hover:text-red-500 transition-colors rounded-full hover:bg-gray-50"
+                                        >
                                             <Icon name="X" size={16} />
                                         </button>
                                     </div>
@@ -266,9 +391,18 @@ function App() {
                         onDragOver={onDragOver}
                         onDragLeave={onDragLeave}
                         onDrop={onDrop}
-                        className={`drop-zone relative h-64 rounded-3xl flex flex-col items-center justify-center text-center p-8 mb-8 border-2 border-dashed transition-all duration-300 ${isDragOver ? 'border-blue-500 bg-blue-50 scale-[1.01]' : 'border-gray-200 hover:border-gray-300'}`}
+                        className={`
+              drop-zone relative h-64 rounded-3xl flex flex-col items-center justify-center text-center p-8 mb-8 border-2 border-dashed transition-all duration-300
+              ${isDragOver ? 'border-blue-500 bg-blue-50 scale-[1.01]' : 'border-gray-200 hover:border-gray-300'}
+            `}
                     >
-                        <input type="file" multiple accept=".xlsx, .xls, .csv" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                        <input
+                            type="file"
+                            multiple
+                            accept=".xlsx,.xls,.csv"
+                            onChange={handleFileUpload}
+                            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+                        />
                         <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
                             <Icon name="UploadCloud" size={32} className="text-blue-500" />
                         </div>
@@ -278,9 +412,19 @@ function App() {
                 )}
 
                 <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-10">
-                    <div className={`flex items-center gap-3 px-4 py-2 rounded-full shadow-sm border transition-colors ${processedData.length === 0 && fileQueue.some(f => f.status === 'error') ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-100 text-gray-600'}`}>
+                    <div
+                        className={`
+              flex items-center gap-3 px-4 py-2 rounded-full shadow-sm border transition-colors
+              ${processedData.length === 0 && fileQueue.some(f => f.status === 'error')
+                                ? 'bg-red-50 border-red-200 text-red-600'
+                                : 'bg-white border-gray-100 text-gray-600'
+                            }
+            `}
+                    >
                         <Icon name="Info" size={16} />
-                        <span className="text-sm font-medium">{uploadStatus || "Aguardando arquivos..."}</span>
+                        <span className="text-sm font-medium">
+                            {uploadStatus || 'Aguardando arquivos...'}
+                        </span>
                         {isProcessing && processProgress.total > 0 && (
                             <span className="ml-2 text-xs font-bold bg-blue-100 text-blue-600 px-2 py-1 rounded">
                                 {processProgress.current}/{processProgress.total}
@@ -330,7 +474,10 @@ function App() {
                                 <thead className="bg-gray-50">
                                     <tr>
                                         {FINAL_HEADERS.slice(0, 8).map(header => (
-                                            <th key={header} className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider">
+                                            <th
+                                                key={header}
+                                                className="px-4 py-3 text-left text-xs font-bold text-gray-600 uppercase tracking-wider"
+                                            >
                                                 {header}
                                             </th>
                                         ))}
@@ -341,7 +488,7 @@ function App() {
                                         <tr key={idx} className="hover:bg-gray-50">
                                             {FINAL_HEADERS.slice(0, 8).map(header => (
                                                 <td key={header} className="px-4 py-3 whitespace-nowrap text-gray-700">
-                                                    {row[header] || '-'}
+                                                    {row[header as keyof ProcessedRow] || '-'}
                                                 </td>
                                             ))}
                                         </tr>
