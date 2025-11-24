@@ -1,4 +1,4 @@
-export const FINAL_HEADERS = [
+export const FINAL_HEADERS: readonly string[] = [
     "PROJETO",
     "Instalação", "Nome", "CNPJ/CPF", "Distribuidora", "Cep", "Endereço", "Cidade", "UF",
     "Tipo de Pagamento", "Tipo Contrato", "Desconto contrato (%)", "Condição Comercial",
@@ -12,9 +12,9 @@ export const FINAL_HEADERS = [
     "Status", "Cancelada", "Data de Cancelamento", "Motivo do Cancelamento",
     "Cancelamento", "Dias Atrasados", "Risco",
     "Região", "Arquivo Origem"
-];
+] as const;
 
-export const EGS_MAPPING = {
+export const EGS_MAPPING: Record<string, string> = {
     "Instalação": "Instalação",
     "CNPJ": "CNPJ/CPF",
     "Distribuidora": "Distribuidora",

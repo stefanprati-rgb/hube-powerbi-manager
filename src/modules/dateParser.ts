@@ -1,4 +1,4 @@
-export const parseExcelDate = (dateVal) => {
+export const parseExcelDate = (dateVal: any): Date | null => {
     try {
         if (!dateVal) return null;
 

@@ -1,4 +1,4 @@
-export const parseCurrency = (val) => {
+export const parseCurrency = (val: any): number => {
     if (typeof val === 'number') return val;
     if (!val) return 0;
 
@@ -18,7 +18,7 @@ export const parseCurrency = (val) => {
 };
 
 // Cálculo seguro convertendo para centavos
-export const calculateEconomySafe = (custoComGD, custoSemGD) => {
+export const calculateEconomySafe = (custoComGD: number, custoSemGD: number): string => {
     const comGD_centavos = Math.round(custoComGD * 100);
     const semGD_centavos = Math.round(custoSemGD * 100);
 

@@ -2,9 +2,16 @@ import { FINAL_HEADERS, EGS_MAPPING } from '../config/constants';
 import { parseExcelDate } from './dateParser';
 import { parseCurrency, calculateEconomySafe } from './currencyMath';
 import { calculateDaysLate, determineRisk, shouldSkipRow } from './businessRules';
+import { ExcelRow, ProcessResult } from '../types';
 
-export const processSheetData = (sheetData, fileName, sheetName, manualCode, cutoffDateStr) => {
-    const processedRows = [];
+export const processSheetData = (
+    sheetData: ExcelRow[],
+    fileName: string,
+    sheetName: string,
+    manualCode: string,
+    cutoffDateStr?: string
+): ProcessResult => {
+    const processedRows: any[] = [];
 
     const stats = {
         total: sheetData.length,
@@ -29,7 +36,7 @@ export const processSheetData = (sheetData, fileName, sheetName, manualCode, cut
         }
 
         // --- Construção da Linha ---
-        const newRow = {};
+        const newRow: Record<string, any> = {};
         FINAL_HEADERS.forEach(header => newRow[header] = "");
 
         // --- Preenchimento ---

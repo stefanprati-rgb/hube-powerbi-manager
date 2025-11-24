@@ -2,17 +2,18 @@ import React, { useState, useCallback } from 'react';
 import * as XLSX from 'xlsx';
 import Icon from './components/Icon';
 import { processSheetData, FINAL_HEADERS } from './utils/excelHelpers';
+import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
 
 function App() {
-    const [fileQueue, setFileQueue] = useState([]);
-    const [processedData, setProcessedData] = useState([]);
-    const [isProcessing, setIsProcessing] = useState(false);
-    const [isDragOver, setIsDragOver] = useState(false);
-    const [uploadStatus, setUploadStatus] = useState('');
-    const [processProgress, setProcessProgress] = useState({ current: 0, total: 0 });
-    const [cutoffDate, setCutoffDate] = useState('2025-06-01');
+    const [fileQueue, setFileQueue] = useState<FileQueueItem[]>([]);
+    const [processedData, setProcessedData] = useState<ProcessedRow[]>([]);
+    const [isProcessing, setIsProcessing] = useState<boolean>(false);
+    const [isDragOver, setIsDragOver] = useState<boolean>(false);
+    const [uploadStatus, setUploadStatus] = useState<string>('');
+    const [processProgress, setProcessProgress] = useState<ProcessingProgress>({ current: 0, total: 0 });
+    const [cutoffDate, setCutoffDate] = useState<string>('2025-06-01');
 
-    const handleFileUpload = (e) => {
+    const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent<HTMLDivElement>) => {
         const files = Array.from(e.target.files || e.dataTransfer.files);
 
         // Validate file types
@@ -39,13 +40,13 @@ function App() {
         }
     };
 
-    const updateManualCode = (id, code) => {
+    const updateManualCode = (id: number, code: string) => {
         setFileQueue(prev => prev.map(item =>
             item.id === id ? { ...item, manualCode: code, status: 'idle', errorMessage: '' } : item
         ));
     };
 
-    const removeFile = (id) => {
+    const removeFile = (id: number) => {
         setFileQueue(prev => prev.filter(item => item.id !== id));
     };
 

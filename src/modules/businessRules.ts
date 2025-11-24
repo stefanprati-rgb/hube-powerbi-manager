@@ -1,4 +1,4 @@
-export const calculateDaysLate = (dataVencimento) => {
+export const calculateDaysLate = (dataVencimento: Date | null): number => {
     if (!dataVencimento || isNaN(dataVencimento.getTime())) return 0;
 
     const hoje = new Date();
@@ -8,13 +8,13 @@ export const calculateDaysLate = (dataVencimento) => {
     const vencimento = new Date(dataVencimento);
     vencimento.setHours(0, 0, 0, 0);
 
-    const diffTime = hoje - vencimento;
+    const diffTime = hoje.getTime() - vencimento.getTime();
     const diffDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24));
 
     return diffDays > 0 ? diffDays : 0;
 };
 
-export const determineRisk = (status, daysLate) => {
+export const determineRisk = (status: any, daysLate: number): string => {
     const s = String(status || "").trim().toLowerCase();
 
     if (s === "em aberto") return "";
@@ -28,7 +28,16 @@ export const determineRisk = (status, daysLate) => {
     return "";
 };
 
-export const shouldSkipRow = (rowDate, cutoffDateStr, statusFaturamento) => {
+interface SkipResult {
+    shouldSkip: boolean;
+    reason?: 'cancelled' | 'old_date';
+}
+
+export const shouldSkipRow = (
+    rowDate: Date | null,
+    cutoffDateStr: string | undefined,
+    statusFaturamento: any
+): SkipResult => {
     // 1. Filtro de Cancelamento
     const status = String(statusFaturamento || "").toLowerCase();
     if (status.includes("cancelad")) {
