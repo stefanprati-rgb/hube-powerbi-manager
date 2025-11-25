@@ -100,7 +100,6 @@ function App() {
                 let itemHasMissingProjectError = false;
 
                 // 2. Verifica se precisamos pedir o código manual ANTES de processar
-                // Se NÃO temos código manual, precisamos garantir que TODAS as abas tenham a coluna PROJETO
                 if (!item.manualCode || item.manualCode.trim() === '') {
                     const missingProjectColumn = sheets.some(sheet => {
                         const headers = Object.keys(sheet.rows[0] || {}).map(k => k.toLowerCase());
@@ -125,7 +124,7 @@ function App() {
                         )
                     );
                     hasErrors = true;
-                    continue; // Pula o processamento deste arquivo até o usuário corrigir
+                    continue; // Pula este arquivo
                 }
 
                 // 3. Processamento Real
@@ -177,7 +176,7 @@ function App() {
             setUploadStatus(`Concluído! ${allData.length} linhas processadas.`);
         } else {
             if (allData.length > 0) setProcessedData(allData);
-            setUploadStatus('Atenção: Resolva as pendências de PROJETO indicadas.');
+            setUploadStatus('Atenção: Resolva as pendências indicadas.');
         }
         setIsProcessing(false);
     };

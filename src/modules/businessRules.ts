@@ -15,17 +15,13 @@ export const calculateDaysLate = (dataVencimento: Date | null): number => {
 };
 
 export const determineRisk = (status: any, daysLate: number): string => {
-    const s = String(status || "").trim().toLowerCase();
+    // REGRA ATUALIZADA:
+    // O risco é calculado sempre, independente do status (ex: "Em aberto", "Pago", etc).
+    // Baseia-se puramente nos dias passados desde o vencimento.
 
-    if (s === "em aberto") return "";
-
-    if (s.includes("atrasado") || s.includes("expirado")) {
-        if (daysLate <= 30) return "Baixo";
-        if (daysLate <= 90) return "Médio";
-        return "Alto";
-    }
-
-    return "";
+    if (daysLate <= 30) return "Baixo";
+    if (daysLate <= 90) return "Médio";
+    return "Alto";
 };
 
 interface SkipResult {

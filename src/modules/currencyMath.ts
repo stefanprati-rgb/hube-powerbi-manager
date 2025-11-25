@@ -22,10 +22,14 @@ export const calculateEconomySafe = (custoComGD: number, custoSemGD: number): st
     const comGD_centavos = Math.round(custoComGD * 100);
     const semGD_centavos = Math.round(custoSemGD * 100);
 
-    // Economia = Custo Com GD - Custo Sem GD (mantendo sua lógica original)
-    // Nota: Geralmente economia é (Sem GD - Com GD), verifique se o sinal (-) não deveria ser invertido no seu output.
-    // Aqui estou mantendo estritamente a lógica matemática do seu arquivo original.
-    const economia_centavos = comGD_centavos - semGD_centavos;
+    // CORREÇÃO: Economia = (Sem GD) - (Com GD)
+    // Ex: Se custaria 150 (Sem GD) e custou 100 (Com GD), a economia é 50.
+    const economia_centavos = semGD_centavos - comGD_centavos;
+
+    // REGRA DE OURO: Não mostrar economia negativa. Se for < 0, retorna vazio.
+    if (economia_centavos < 0) {
+        return "";
+    }
 
     return (economia_centavos / 100).toFixed(2);
 };
