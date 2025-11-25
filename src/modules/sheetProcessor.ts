@@ -43,18 +43,16 @@ export const processSheetData = (
             return;
         }
 
-        // --- 3. Construção e Validação de PROJETO (CRÍTICO) ---
+        // --- 3. Construção e Validação de PROJETO ---
         const newRow: Record<string, any> = {};
 
         let projetoVal = normalizedRow["Projeto"] || normalizedRow["PROJETO"];
-        // Se o usuário digitou um código manual, ele SOBRESCREVE o da planilha
         if (manualCode && manualCode.trim() !== "") {
             projetoVal = manualCode.toUpperCase();
         }
 
-        // REGRA DE OURO: Se não tem projeto, a linha não pode existir no relatório
         if (!projetoVal || String(projetoVal).trim() === "") {
-            stats.skippedEmpty++; // Contamos como erro de integridade
+            stats.skippedEmpty++;
             return;
         }
 
@@ -76,9 +74,14 @@ export const processSheetData = (
             return;
         }
 
-        // --- 5. Cálculos ---
-        newRow["Desconto contrato (%)"] = 0.25;
+        // --- 5. Cálculos Otimizados (Prioridade para dados existentes) ---
 
+        // A. Desconto Contrato: Mantém o original da planilha se existir
+        if (!newRow["Desconto contrato (%)"]) {
+            newRow["Desconto contrato (%)"] = 0.25;
+        }
+
+        // B. Custos
         const custoSemGD = parseCurrency(newRow["Custo sem GD R$"]);
         const custoComGD = parseCurrency(newRow["Custo com GD R$"]);
         newRow["Custo sem GD R$"] = custoSemGD;
@@ -88,12 +91,47 @@ export const processSheetData = (
             newRow["Valor Final R$"] = parseCurrency(newRow["Valor Final R$"]);
         }
 
-        newRow["Economia R$"] = calculateEconomySafe(custoComGD, custoSemGD);
+        // C. Economia (Blindagem contra valor negativo)
+        const economiaExistente = newRow["Economia R$"];
+        let economiaFinal = "";
 
+        if (economiaExistente !== undefined && economiaExistente !== null && String(economiaExistente).trim() !== "") {
+            // Se veio da planilha, verificamos se é negativo
+            const econVal = parseCurrency(economiaExistente);
+            if (econVal >= 0) {
+                economiaFinal = String(economiaExistente);
+            } else {
+                // Se a planilha trouxe negativo, forçamos vazio
+                economiaFinal = "";
+            }
+        } else {
+            // Se não tem na planilha, calculamos
+            economiaFinal = calculateEconomySafe(custoComGD, custoSemGD);
+        }
+        newRow["Economia R$"] = economiaFinal;
+
+        // D. Dias de Atraso
         const dataVencimento = parseExcelDate(newRow["Vencimento"]);
-        const diasAtraso = calculateDaysLate(dataVencimento);
+        let diasAtraso: number;
+        const diasInput = newRow["Dias Atrasados"] || normalizedRow["Dias de Atraso"];
+
+        if (diasInput !== undefined && diasInput !== null && String(diasInput).trim() !== "") {
+            diasAtraso = Number(diasInput);
+            if (isNaN(diasAtraso)) {
+                diasAtraso = calculateDaysLate(dataVencimento);
+            }
+        } else {
+            diasAtraso = calculateDaysLate(dataVencimento);
+        }
         newRow["Dias Atrasados"] = diasAtraso;
-        newRow["Risco"] = determineRisk(newRow["Status"], diasAtraso);
+
+        // E. Risco
+        // Prioriza o que veio da planilha (ex: "Alto" na aba MATRIX), se não tiver, calcula.
+        if (newRow["Risco"] && String(newRow["Risco"]).trim() !== "") {
+            // Mantém o risco original
+        } else {
+            newRow["Risco"] = determineRisk(newRow["Status"], diasAtraso);
+        }
 
         newRow["Arquivo Origem"] = `${fileName} [${sheetName}]`;
 
