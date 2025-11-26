@@ -42,45 +42,22 @@ function App() {
             validExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
         );
 
-    // ATUALIZAÇÃO AQUI: Lógica de deteção de nomes refinada
+    // ATUALIZAÇÃO: Não infere mais nada pelo nome do arquivo para evitar erros em planilhas mistas
     const addFilesToQueue = (files: File[]) => {
         if (!files.length) return;
 
         const newItems: FileQueueItem[] = files.map(f => {
-            let detectedProj = '';
-            const nameUpper = f.name.toUpperCase();
+            // Não tentamos mais detectar o projeto pelo nome (ex: LN_ALA_MX.xlsx)
+            // Isso evita definir uma data específica (ex: EGS jun/25) num arquivo que pode ter outros projetos
+            const detectedProj = '';
 
-            // Lua Nova
-            if (nameUpper.includes('LUA NOVA') || nameUpper.includes('LNV')) detectedProj = 'LNV';
-
-            // Alagoas
-            else if (nameUpper.includes('ALAGOAS') || nameUpper.includes('ALA')) detectedProj = 'ALA';
-
-            // Matrix
-            else if (nameUpper.includes('MATRIX') || nameUpper.includes('MTX')) detectedProj = 'MTX';
-
-            // E3 Energia (Antiga EGS)
-            else if (nameUpper.includes('E3 ENERGIA') || nameUpper.includes('EGS')) detectedProj = 'EGS';
-
-            // Era Verde (Tenta diferenciar MG de SP pelo nome do arquivo)
-            else if (nameUpper.includes('ERA VERDE') || nameUpper.includes('EVD')) {
-                if (nameUpper.includes('MG')) detectedProj = 'EMG';
-                else if (nameUpper.includes('SP')) detectedProj = 'ESP';
-                else detectedProj = 'EVD'; // Genérico, o worker resolverá pela coluna UF
-            }
-
-            // Data Inicial (Prioriza o padrão ou salvo no localStorage)
-            let initialDate = getInitialDate(detectedProj || 'DEFAULT');
-
-            // Se for Era Verde Genérico (EVD), usamos a data base de SP/MG (maio/25)
-            if (detectedProj === 'EVD') {
-                initialDate = getInitialDate('ESP');
-            }
+            // Usa sempre a data padrão genérica (ou a última salva pelo usuário para 'DEFAULT')
+            const initialDate = getInitialDate('DEFAULT');
 
             return {
                 file: f,
                 id: Date.now() + Math.random(),
-                manualCode: detectedProj,
+                manualCode: detectedProj, // Começa vazio
                 cutoffDate: initialDate,
                 status: 'idle',
                 errorMessage: ''
@@ -114,7 +91,7 @@ function App() {
     const updateItemField = (id: number, field: 'manualCode' | 'cutoffDate', value: string) => {
         setFileQueue(prev => prev.map(it => {
             if (it.id === id) {
-                // Se o usuário mudar o código manualmente, atualizamos a data se houver um default
+                // Se o usuário mudar o código manualmente, AÍ SIM tentamos sugerir a data daquele projeto
                 if (field === 'manualCode') {
                     const newCode = value.toUpperCase();
                     if (DEFAULT_CUTOFFS[newCode] || localStorage.getItem(`cutoff_${newCode}`)) {
@@ -156,9 +133,11 @@ function App() {
             setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'processing' } : it));
 
             try {
-                // Salva a data usada
+                // Persistência: Salva a data usada. Se tiver sigla, salva pra sigla. Se não, salva pro Default.
                 if (item.manualCode) {
                     localStorage.setItem(`cutoff_${item.manualCode}`, item.cutoffDate);
+                } else {
+                    localStorage.setItem(`cutoff_DEFAULT`, item.cutoffDate);
                 }
 
                 const buffer = await item.file.arrayBuffer();
@@ -192,7 +171,6 @@ function App() {
                     allData.push(...processedRows);
                     setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '' } : it));
                 } else {
-                    // Sucesso mas sem linhas (ex: tudo filtrado)
                     setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '' } : it));
                 }
 
@@ -266,7 +244,7 @@ function App() {
                     />
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
                     <div>
-                        <h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v11.0</span></h1>
+                        <h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v11.1</span></h1>
                     </div>
                 </div>
 
@@ -349,10 +327,9 @@ function App() {
                                         )}
                                     </div>
 
-                                    {/* Controles Individuais: Data de Corte e Código */}
+                                    {/* Controles Individuais */}
                                     <div className="flex items-center gap-3 border-l pl-3 border-gray-100">
 
-                                        {/* Seletor de Data Individual */}
                                         <div className="flex flex-col items-end group">
                                             <label className="text-[9px] font-bold uppercase mb-0.5 mr-1 text-gray-300 group-hover:text-blue-500 transition-colors">
                                                 Data Corte
