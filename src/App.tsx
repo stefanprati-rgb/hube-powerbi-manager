@@ -20,7 +20,7 @@ function App() {
     const [fileQueue, setFileQueue] = useState<FileQueueItem[]>([]);
     const [processedData, setProcessedData] = useState<ProcessedRow[]>([]);
     const [isProcessing, setIsProcessing] = useState<boolean>(false);
-    const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false); // NOVO ESTADO
+    const [isAnalyzing, setIsAnalyzing] = useState<boolean>(false);
     const [isDragOver, setIsDragOver] = useState<boolean>(false);
     const [uploadStatus, setUploadStatus] = useState<string>('');
     const [processProgress, setProcessProgress] = useState<ProcessingProgress>({ current: 0, total: 0 });
@@ -39,35 +39,20 @@ function App() {
 
     const isCodeValid = (code: string) => code && VALID_PROJECT_CODES.includes(code.toUpperCase());
 
-    // Tenta detectar sigla pelo nome do arquivo (apenas como sugestão)
-    const guessProjectFromFilename = (filename: string): string => {
-        const name = filename.toUpperCase();
-        if (name.includes('LUA NOVA') || name.includes('LNV')) return 'LNV';
-        if (name.includes('ALAGOAS') || name.includes('ALA')) return 'ALA';
-        if (name.includes('E3 ENERGIA') || name.includes('EGS')) return 'EGS';
-        if (name.includes('MATRIX') || name.includes('MX') || name.includes('MTX')) return 'MTX';
-        if (name.includes('ERA VERDE') || name.includes('EVD')) {
-            if (name.includes('MG')) return 'EMG';
-            if (name.includes('SP')) return 'ESP';
-            return 'EVD';
-        }
-        return '';
-    };
-
     const addFilesToQueue = async (files: File[]) => {
         if (!files.length) return;
 
-        // ATIVA INDICADOR DE CARREGAMENTO
         setIsAnalyzing(true);
         setUploadStatus(`A analisar estrutura de ${files.length} ficheiro(s)...`);
 
         const newItems: FileQueueItem[] = [];
 
-        // Pequeno delay para garantir que a UI atualiza antes de travar no loop (opcional, mas boa prática)
+        // Pequeno delay para UI atualizar
         await new Promise(resolve => setTimeout(resolve, 100));
 
         for (const file of files) {
             try {
+                // 1. Analisa conteúdo (Worker)
                 const buffer = await file.arrayBuffer();
                 const detectedProjects = await new Promise<string[]>((resolve) => {
                     const worker = new ExcelWorker();
@@ -76,6 +61,7 @@ function App() {
                     worker.onerror = () => { worker.terminate(); resolve([]); };
                 });
 
+                // 2. Se encontrou projetos na coluna PROJETO, cria itens específicos
                 if (detectedProjects.length > 0) {
                     detectedProjects.forEach(proj => {
                         newItems.push({
@@ -89,18 +75,16 @@ function App() {
                         });
                     });
                 } else {
-                    const suggestedCode = guessProjectFromFilename(file.name);
-                    let initialDate = getInitialDate(suggestedCode || 'DEFAULT');
-                    if (suggestedCode === 'EVD') initialDate = getInitialDate('ESP');
-
+                    // 3. Se NÃO tem coluna PROJETO, entra VAZIO (Obrigatório preencher)
+                    // Removemos qualquer tentativa de adivinhar pelo nome do arquivo.
                     newItems.push({
                         file: file,
                         id: Date.now() + Math.random(),
-                        manualCode: suggestedCode,
-                        targetProject: suggestedCode || undefined,
-                        cutoffDate: initialDate,
+                        manualCode: '', // Vazio propositadamente
+                        targetProject: undefined,
+                        cutoffDate: getInitialDate('DEFAULT'),
                         status: 'idle',
-                        errorMessage: ''
+                        errorMessage: '' // O botão de processar validará se está preenchido
                     });
                 }
 
@@ -113,7 +97,6 @@ function App() {
         setFileQueue(prev => [...prev, ...newItems]);
         setUploadStatus(`${newItems.length} item(s) adicionado(s) à fila.`);
 
-        // DESATIVA INDICADOR
         setIsAnalyzing(false);
     };
 
@@ -148,9 +131,10 @@ function App() {
         const pendingItems = fileQueue.filter(f => f.status !== 'success');
         if (!pendingItems.length) { alert("Todos os arquivos já foram processados com sucesso."); return; }
 
+        // Validação: Bloqueia se houver sigla vazia ou inválida
         const invalidItems = pendingItems.filter(item => !isCodeValid(item.manualCode));
         if (invalidItems.length > 0) {
-            alert(`Atenção: Existem arquivos sem Sigla definida ou inválida.\nPor favor, preencha o campo "Sigla" (ex: EGS, LNV) nos itens destacados em vermelho.`);
+            alert(`Atenção: Existem arquivos sem Sigla definida ou inválida.\n\nComo a coluna "PROJETO" não foi encontrada nestes ficheiros, você deve informar a sigla manualmente (ex: EGS) antes de processar.`);
             setFileQueue(prev => prev.map(it =>
                 !isCodeValid(it.manualCode) && it.status !== 'success'
                     ? { ...it, status: 'error', errorMessage: 'Sigla Obrigatória' }
@@ -250,7 +234,7 @@ function App() {
                 <div className="flex items-center gap-4">
                     <img src="https://hube.energy/wp-content/uploads/2024/10/Logo-1.svg" className="h-8 w-auto" alt="Hube Logo" onError={e => ((e.target as HTMLImageElement).style.display = 'none')} />
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
-                    <div><h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v13.2</span></h1></div>
+                    <div><h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v13.3</span></h1></div>
                 </div>
                 <div className="flex items-center gap-4">
                     {fileQueue.length > 0 && (
@@ -260,18 +244,16 @@ function App() {
             </header>
 
             <main className="max-w-5xl mx-auto px-6">
-                {/* Drop Zone com Indicador de Loading */}
                 <div onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} className={`drop-zone relative rounded-3xl flex flex-col items-center justify-center text-center p-8 mb-8 border-2 border-dashed transition-all duration-300 ${isDragOver ? 'border-blue-500 bg-blue-50 scale-[1.01]' : 'border-gray-200 hover:border-gray-300'} ${fileQueue.length > 0 ? 'h-40' : 'h-64'}`}>
                     <input type="file" multiple accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" disabled={isAnalyzing} />
 
-                    {/* CONTEÚDO DINÂMICO DA DROP ZONE */}
                     {isAnalyzing ? (
                         <div className="flex flex-col items-center animate-pulse">
                             <div className="animate-spin mb-4 text-[#00D655]">
                                 <Icon name="Loader2" size={40} />
                             </div>
                             <h3 className="text-lg font-bold text-gray-800">A analisar ficheiros...</h3>
-                            <p className="text-sm text-gray-500">A detetar projetos e siglas</p>
+                            <p className="text-sm text-gray-500">A verificar colunas de projeto</p>
                         </div>
                     ) : (
                         <>
@@ -296,7 +278,7 @@ function App() {
 
                         <div className="space-y-3">
                             {fileQueue.map(item => (
-                                <div key={item.id} className={`relative bg-white rounded-2xl p-4 flex items-center gap-4 shadow-sm border transition-all duration-200 ${item.status === 'error' ? 'border-red-400 ring-2 ring-red-100' : 'border-gray-100 hover:shadow-md'}`}>
+                                <div key={item.id} className={`relative bg-white rounded-2xl p-4 flex items-center gap-4 shadow-sm border transition-all duration-200 ${item.status === 'error' ? 'border-red-400 ring-2 ring-red-100' : 'border-gray-100 hover:shadow-md'} ${item.status === 'processing' ? 'border-blue-400 ring-2 ring-blue-100' : ''}`}>
                                     <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${item.status === 'processing' ? 'bg-blue-50 text-blue-500' : item.status === 'success' ? 'bg-[#00D655]/10 text-[#00D655]' : item.status === 'error' ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-400'}`}>
                                         {item.status === 'idle' && <Icon name="FileSpreadsheet" size={20} />}
                                         {item.status === 'processing' && <div className="animate-spin"><Icon name="Loader2" size={20} /></div>}
@@ -307,19 +289,29 @@ function App() {
                                     <div className="flex-1 min-w-0">
                                         <h3 className={`text-sm font-semibold truncate ${item.status === 'error' ? 'text-red-600' : 'text-[#1D1D1F]'}`}>
                                             {item.file.name}
-                                            {item.targetProject && <span className="ml-2 text-xs font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded">[{item.targetProject}]</span>}
+                                            {item.targetProject && (
+                                                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-blue-100 text-blue-700 border border-blue-200">
+                                                    {item.targetProject}
+                                                </span>
+                                            )}
                                         </h3>
                                         {item.status === 'error' ? <p className="text-xs text-red-500 font-bold mt-0.5">{item.errorMessage}</p> : <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">{(item.file.size / 1024).toFixed(0)} KB</p>}
                                     </div>
 
                                     <div className="flex items-center gap-3 border-l pl-3 border-gray-100">
                                         <div className="flex flex-col items-end group">
-                                            <label className="text-[9px] font-bold uppercase mb-0.5 mr-1 text-gray-300">Data Corte</label>
+                                            <label className="text-[9px] font-bold uppercase mb-0.5 mr-1 text-gray-300 group-hover:text-blue-500 transition-colors">Data Corte</label>
                                             <input type="date" value={item.cutoffDate} onChange={e => updateItemField(item.id, 'cutoffDate', e.target.value)} className="ios-input w-28 p-1.5 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:bg-white focus:border-[#00D655]" />
                                         </div>
                                         <div className="flex flex-col items-end group">
-                                            <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${!isCodeValid(item.manualCode) ? 'text-red-500' : 'text-gray-300'}`}>Sigla</label>
-                                            <input type="text" maxLength={3} className={`ios-input w-16 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none focus:bg-white ${!isCodeValid(item.manualCode) ? 'border-red-300 bg-red-50 text-red-800 placeholder-red-300' : 'border-gray-200 bg-gray-50 text-[#1D1D1F] focus:border-[#00D655]'}`} placeholder="???" value={item.manualCode} onChange={e => updateItemField(item.id, 'manualCode', e.target.value)} />
+                                            <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${!isCodeValid(item.manualCode) ? 'text-red-500' : 'text-gray-300 group-hover:text-[#00D655]'}`}>Sigla</label>
+                                            <input
+                                                type="text" maxLength={3}
+                                                className={`ios-input w-16 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none focus:bg-white ${!isCodeValid(item.manualCode) ? 'border-red-300 bg-red-50 text-red-800 placeholder-red-300' : 'border-gray-200 bg-gray-50 text-[#1D1D1F] focus:border-[#00D655]'}`}
+                                                placeholder="???" value={item.manualCode}
+                                                onChange={e => updateItemField(item.id, 'manualCode', e.target.value)}
+                                                title={!isCodeValid(item.manualCode) ? "Sigla obrigatória" : ""}
+                                            />
                                         </div>
                                         <button onClick={() => removeFile(item.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors rounded-full hover:bg-gray-50"><Icon name="X" size={16} /></button>
                                     </div>
@@ -330,7 +322,7 @@ function App() {
                 )}
 
                 <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-10">
-                    <div className="flex items-center gap-3 px-4 py-2 bg-white rounded-full shadow-sm border border-gray-100 text-gray-600">
+                    <div className={`flex items-center gap-3 px-4 py-2 rounded-full shadow-sm border transition-colors ${processedData.length === 0 && fileQueue.some(f => f.status === 'error') ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-100 text-gray-600'}`}>
                         <Icon name="Info" size={16} />
                         <span className="text-sm font-medium">{uploadStatus || 'Aguardando arquivos...'}</span>
                         {isProcessing && <span className="ml-2 text-xs font-bold bg-blue-100 text-blue-600 px-2 py-1 rounded">{processProgress.current}/{processProgress.total}</span>}
