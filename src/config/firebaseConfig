@@ -1,0 +1,20 @@
+// src/config/firebase.ts
+import { initializeApp } from "firebase/app";
+import { getFirestore } from "firebase/firestore";
+
+// ⚠️ SUBSTITUA COM AS SUAS CHAVES DO FIREBASE CONSOLE
+// (Vá em: Project Settings > General > Your apps > SDK setup and configuration)
+const firebaseConfig = {
+    apiKey: "SUA_API_KEY_AQUI",
+    authDomain: "hube-powerbi-manager.firebaseapp.com",
+    projectId: "hube-powerbi-manager",
+    storageBucket: "hube-powerbi-manager.appspot.com",
+    messagingSenderId: "SEU_SENDER_ID",
+    appId: "SEU_APP_ID"
+};
+
+// Inicializa o Firebase
+const app = initializeApp(firebaseConfig);
+
+// Exporta a referência do banco de dados para ser usada no App
+export const db = getFirestore(app);

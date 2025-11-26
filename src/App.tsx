@@ -1,18 +1,18 @@
 // src/App.tsx
-import React, { useState, useCallback, useMemo } from 'react';
+import React, { useState, useCallback, useMemo, useEffect } from 'react';
 import * as XLSX from 'xlsx';
+import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { db } from './config/firebase';
 import Icon from './components/Icon';
+import FileItem from './components/FileItem';
 import { FINAL_HEADERS, VALID_PROJECT_CODES } from './config/constants';
 import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
 import ExcelWorker from './workers/excel.worker?worker';
 
+// Defaults de segurança (caso não haja internet ou banco vazio)
 const DEFAULT_CUTOFFS: Record<string, string> = {
-    'LNV': '2025-01-01',
-    'ALA': '2025-01-01',
-    'ESP': '2025-05-01',
-    'EMG': '2025-05-01',
-    'EGS': '2025-06-01',
-    'MTX': '2025-01-01',
+    'LNV': '2025-01-01', 'ALA': '2025-01-01', 'ESP': '2025-05-01',
+    'EMG': '2025-05-01', 'EGS': '2025-06-01', 'MTX': '2025-01-01',
     'DEFAULT': '2025-01-01'
 };
 
@@ -25,13 +25,31 @@ function App() {
     const [uploadStatus, setUploadStatus] = useState<string>('');
     const [processProgress, setProcessProgress] = useState<ProcessingProgress>({ current: 0, total: 0 });
 
+    // Estado para guardar datas vindas da nuvem
+    const [cloudCutoffs, setCloudCutoffs] = useState<Record<string, string>>(DEFAULT_CUTOFFS);
+
+    // --- Efeito: Carregar Memória da Nuvem ---
+    useEffect(() => {
+        const loadSettings = async () => {
+            try {
+                const docRef = doc(db, "app_settings", "cutoffs");
+                const docSnap = await getDoc(docRef);
+                if (docSnap.exists()) {
+                    setCloudCutoffs(prev => ({ ...prev, ...docSnap.data() }));
+                    console.log("☁️ Datas sincronizadas com sucesso.");
+                }
+            } catch (error) {
+                console.warn("Modo Offline ou erro no Firebase. Usando defaults locais.");
+            }
+        };
+        loadSettings();
+    }, []);
+
     const validExtensions = useMemo(() => ['.xlsx', '.xls', '.csv'], []);
 
     const getInitialDate = (projCode: string = 'DEFAULT') => {
         const code = projCode.toUpperCase();
-        const saved = localStorage.getItem(`cutoff_${code}`);
-        if (saved) return saved;
-        return DEFAULT_CUTOFFS[code] || DEFAULT_CUTOFFS['DEFAULT'];
+        return cloudCutoffs[code] || DEFAULT_CUTOFFS['DEFAULT'];
     };
 
     const normalizeFiles = (fileList: FileList | File[]): File[] =>
@@ -39,20 +57,17 @@ function App() {
 
     const isCodeValid = (code: string) => code && VALID_PROJECT_CODES.includes(code.toUpperCase());
 
+    /* --- Adição de Arquivos --- */
     const addFilesToQueue = async (files: File[]) => {
         if (!files.length) return;
-
         setIsAnalyzing(true);
-        setUploadStatus(`A analisar estrutura de ${files.length} ficheiro(s)...`);
+        setUploadStatus(`A analisar ${files.length} ficheiro(s)...`);
 
         const newItems: FileQueueItem[] = [];
-
-        // Pequeno delay para UI atualizar
-        await new Promise(resolve => setTimeout(resolve, 100));
+        await new Promise(resolve => setTimeout(resolve, 50)); // Yield UI
 
         for (const file of files) {
             try {
-                // 1. Analisa conteúdo (Worker)
                 const buffer = await file.arrayBuffer();
                 const detectedProjects = await new Promise<string[]>((resolve) => {
                     const worker = new ExcelWorker();
@@ -61,43 +76,32 @@ function App() {
                     worker.onerror = () => { worker.terminate(); resolve([]); };
                 });
 
-                // 2. Se encontrou projetos na coluna PROJETO, cria itens específicos
                 if (detectedProjects.length > 0) {
                     detectedProjects.forEach(proj => {
                         newItems.push({
-                            file: file,
-                            id: Date.now() + Math.random(),
-                            manualCode: proj,
-                            targetProject: proj,
+                            file, id: Date.now() + Math.random(),
+                            manualCode: proj, targetProject: proj,
                             cutoffDate: getInitialDate(proj),
-                            status: 'idle',
-                            errorMessage: ''
+                            status: 'idle', errorMessage: ''
                         });
                     });
                 } else {
-                    // 3. Se NÃO tem coluna PROJETO, entra VAZIO (Obrigatório preencher)
-                    // Removemos qualquer tentativa de adivinhar pelo nome do arquivo.
                     newItems.push({
-                        file: file,
-                        id: Date.now() + Math.random(),
-                        manualCode: '', // Vazio propositadamente
-                        targetProject: undefined,
+                        file, id: Date.now() + Math.random(),
+                        manualCode: '', targetProject: undefined,
                         cutoffDate: getInitialDate('DEFAULT'),
-                        status: 'idle',
-                        errorMessage: '' // O botão de processar validará se está preenchido
+                        status: 'idle', errorMessage: ''
                     });
                 }
-
             } catch (e) {
-                console.error("Erro na análise:", file.name);
-                newItems.push({ file, id: Date.now(), manualCode: '', cutoffDate: getInitialDate('DEFAULT'), status: 'idle', errorMessage: '' });
+                console.error("Erro:", file.name);
+                newItems.push({ file, id: Date.now(), manualCode: '', cutoffDate: getInitialDate('DEFAULT'), status: 'idle', errorMessage: 'Erro na leitura' });
             }
         }
 
         setFileQueue(prev => [...prev, ...newItems]);
-        setUploadStatus(`${newItems.length} item(s) adicionado(s) à fila.`);
-
         setIsAnalyzing(false);
+        setUploadStatus(`${newItems.length} item(s) adicionado(s).`);
     };
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent<HTMLDivElement>) => {
@@ -106,18 +110,15 @@ function App() {
         addFilesToQueue(normalizeFiles(list));
     };
 
+    /* --- Updates de UI --- */
     const updateItemField = (id: number, field: 'manualCode' | 'cutoffDate', value: string) => {
         setFileQueue(prev => prev.map(it => {
             if (it.id === id) {
                 if (field === 'manualCode') {
                     const newCode = value.toUpperCase();
-                    return {
-                        ...it,
-                        manualCode: newCode,
-                        targetProject: newCode,
-                        cutoffDate: getInitialDate(newCode),
-                        status: 'idle', errorMessage: ''
-                    };
+                    // Atualiza data se o código for válido
+                    const newDate = cloudCutoffs[newCode] ? getInitialDate(newCode) : it.cutoffDate;
+                    return { ...it, manualCode: newCode, targetProject: newCode, cutoffDate: newDate, status: 'idle', errorMessage: '' };
                 }
                 return { ...it, [field]: value, status: 'idle', errorMessage: '' };
             }
@@ -127,84 +128,72 @@ function App() {
 
     const removeFile = (id: number) => setFileQueue(prev => prev.filter(it => it.id !== id));
 
+    /* --- Processamento --- */
     const runBatch = async () => {
         const pendingItems = fileQueue.filter(f => f.status !== 'success');
-        if (!pendingItems.length) { alert("Todos os arquivos já foram processados com sucesso."); return; }
+        if (!pendingItems.length) { alert("Todos os arquivos já foram processados."); return; }
 
-        // Validação: Bloqueia se houver sigla vazia ou inválida
         const invalidItems = pendingItems.filter(item => !isCodeValid(item.manualCode));
         if (invalidItems.length > 0) {
-            alert(`Atenção: Existem arquivos sem Sigla definida ou inválida.\n\nComo a coluna "PROJETO" não foi encontrada nestes ficheiros, você deve informar a sigla manualmente (ex: EGS) antes de processar.`);
-            setFileQueue(prev => prev.map(it =>
-                !isCodeValid(it.manualCode) && it.status !== 'success'
-                    ? { ...it, status: 'error', errorMessage: 'Sigla Obrigatória' }
-                    : it
-            ));
+            alert(`Erro: ${invalidItems.length} arquivo(s) sem Sigla válida. Preencha (LNV, ALA, etc) antes de processar.`);
+            setFileQueue(prev => prev.map(it => !isCodeValid(it.manualCode) && it.status !== 'success' ? { ...it, status: 'error', errorMessage: 'Sigla Obrigatória' } : it));
             return;
         }
 
         setIsProcessing(true);
         setProcessProgress({ current: 0, total: fileQueue.length });
-        setUploadStatus('Iniciando processamento...');
+        setUploadStatus('A processar...');
 
         const allData: ProcessedRow[] = [...processedData];
         let hasErrors = false;
+        const newCloudData: Record<string, string> = {}; // Para salvar no final
 
         for (let i = 0; i < fileQueue.length; i++) {
             const item = fileQueue[i];
-
-            if (item.status === 'success') {
-                setProcessProgress(prev => ({ ...prev, current: i + 1 }));
-                continue;
-            }
+            if (item.status === 'success') { setProcessProgress(prev => ({ ...prev, current: i + 1 })); continue; }
 
             setProcessProgress(prev => ({ ...prev, current: i + 1 }));
-            setUploadStatus(`Processando ${i + 1}/${fileQueue.length}: ${item.file.name}...`);
             setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'processing' } : it));
 
             try {
-                if (item.manualCode) localStorage.setItem(`cutoff_${item.manualCode}`, item.cutoffDate);
+                // Guarda a data para salvar na nuvem
+                if (item.manualCode) newCloudData[item.manualCode] = item.cutoffDate;
 
                 const buffer = await item.file.arrayBuffer();
                 const processedRows = await new Promise<ProcessedRow[]>((resolve, reject) => {
                     const worker = new ExcelWorker();
                     worker.postMessage({
-                        action: 'process',
-                        fileBuffer: buffer,
-                        fileName: item.file.name,
-                        manualCode: item.manualCode,
-                        cutoffDate: item.cutoffDate,
-                        targetProject: item.targetProject
+                        action: 'process', fileBuffer: buffer, fileName: item.file.name,
+                        manualCode: item.manualCode, cutoffDate: item.cutoffDate, targetProject: item.targetProject
                     });
-                    worker.onmessage = (e) => {
-                        worker.terminate();
-                        if (e.data.success) resolve(e.data.rows);
-                        else reject(new Error(e.data.error));
-                    };
-                    worker.onerror = (err) => { worker.terminate(); reject(new Error("Falha crítica no Worker.")); };
+                    worker.onmessage = (e) => { worker.terminate(); if (e.data.success) resolve(e.data.rows); else reject(new Error(e.data.error)); };
+                    worker.onerror = () => { worker.terminate(); reject(new Error("Falha no Worker")); };
                 });
 
                 if (processedRows.length > 0) {
                     allData.push(...processedRows);
                     setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '' } : it));
                 } else {
-                    setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '0 linhas (verifique a data)' } : it));
+                    setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '0 linhas geradas' } : it));
                 }
-
             } catch (err: any) {
-                console.error(err);
                 hasErrors = true;
                 setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'error', errorMessage: err.message.substring(0, 60) } : it));
             }
         }
 
-        if (!hasErrors) {
-            setProcessedData(allData);
-            setUploadStatus(`Concluído! ${allData.length} linhas geradas.`);
-        } else {
-            setProcessedData(allData);
-            setUploadStatus('Processo finalizado com alertas.');
+        // Salva na Nuvem (Memória Coletiva)
+        if (Object.keys(newCloudData).length > 0) {
+            try {
+                await setDoc(doc(db, "app_settings", "cutoffs"), newCloudData, { merge: true });
+                setCloudCutoffs(prev => ({ ...prev, ...newCloudData }));
+            } catch (e) { console.error("Erro ao salvar na nuvem", e); }
         }
+
+        if (!hasErrors) setUploadStatus(`Concluído! ${allData.length} linhas.`);
+        else setUploadStatus('Concluído com erros.');
+
+        setProcessedData(allData);
         setIsProcessing(false);
     };
 
@@ -218,15 +207,8 @@ function App() {
 
     const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
     const onDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
-    const onDrop = useCallback((e: React.DragEvent) => {
-        e.preventDefault(); setIsDragOver(false);
-        addFilesToQueue(normalizeFiles(e.dataTransfer.files));
-    }, [validExtensions]);
-
-    const clearAll = () => {
-        if (!confirm('Limpar toda a lista?')) return;
-        setFileQueue([]); setProcessedData([]); setUploadStatus('');
-    };
+    const onDrop = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); addFilesToQueue(normalizeFiles(e.dataTransfer.files)); }, [validExtensions]);
+    const clearAll = () => { if (confirm('Limpar tudo?')) { setFileQueue([]); setProcessedData([]); setUploadStatus(''); } };
 
     return (
         <div className="min-h-screen pb-20 relative bg-[#F5F5F7]">
@@ -234,32 +216,23 @@ function App() {
                 <div className="flex items-center gap-4">
                     <img src="https://hube.energy/wp-content/uploads/2024/10/Logo-1.svg" className="h-8 w-auto" alt="Hube Logo" onError={e => ((e.target as HTMLImageElement).style.display = 'none')} />
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
-                    <div><h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v13.3</span></h1></div>
+                    <h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v14.0 (Cloud)</span></h1>
                 </div>
-                <div className="flex items-center gap-4">
-                    {fileQueue.length > 0 && (
-                        <button onClick={clearAll} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"><Icon name="Trash" size={20} /></button>
-                    )}
-                </div>
+                <div className="flex items-center gap-4">{fileQueue.length > 0 && <button onClick={clearAll} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"><Icon name="Trash" size={20} /></button>}</div>
             </header>
 
             <main className="max-w-5xl mx-auto px-6">
                 <div onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} className={`drop-zone relative rounded-3xl flex flex-col items-center justify-center text-center p-8 mb-8 border-2 border-dashed transition-all duration-300 ${isDragOver ? 'border-blue-500 bg-blue-50 scale-[1.01]' : 'border-gray-200 hover:border-gray-300'} ${fileQueue.length > 0 ? 'h-40' : 'h-64'}`}>
                     <input type="file" multiple accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" disabled={isAnalyzing} />
-
                     {isAnalyzing ? (
                         <div className="flex flex-col items-center animate-pulse">
-                            <div className="animate-spin mb-4 text-[#00D655]">
-                                <Icon name="Loader2" size={40} />
-                            </div>
+                            <div className="animate-spin mb-4 text-[#00D655]"><Icon name="Loader2" size={40} /></div>
                             <h3 className="text-lg font-bold text-gray-800">A analisar ficheiros...</h3>
-                            <p className="text-sm text-gray-500">A verificar colunas de projeto</p>
                         </div>
                     ) : (
                         <>
                             <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><Icon name="UploadCloud" size={32} className="text-blue-500" /></div>
                             <h3 className="text-xl font-bold text-gray-900 mb-2">{fileQueue.length > 0 ? 'Arrastar mais arquivos' : 'Arraste seus arquivos aqui'}</h3>
-                            <p className="text-gray-500 max-w-md mx-auto">{fileQueue.length > 0 ? 'Ou clique para adicionar à fila' : 'Processamento automático de todas as abas.'}</p>
                         </>
                     )}
                 </div>
@@ -268,54 +241,16 @@ function App() {
                     <div className="flex-1 flex flex-col mb-8">
                         <div className="flex justify-between items-center mb-4">
                             <h2 className="text-sm font-bold text-gray-400 uppercase tracking-wider">Fila de Processamento</h2>
-                            {!isAnalyzing && (
-                                <label className="text-[#00D655] text-sm font-medium cursor-pointer hover:underline flex items-center gap-1">
-                                    <Icon name="UploadCloud" size={16} /> Selecionar
-                                    <input type="file" multiple accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="hidden" />
-                                </label>
-                            )}
                         </div>
-
                         <div className="space-y-3">
                             {fileQueue.map(item => (
-                                <div key={item.id} className={`relative bg-white rounded-2xl p-4 flex items-center gap-4 shadow-sm border transition-all duration-200 ${item.status === 'error' ? 'border-red-400 ring-2 ring-red-100' : 'border-gray-100 hover:shadow-md'} ${item.status === 'processing' ? 'border-blue-400 ring-2 ring-blue-100' : ''}`}>
-                                    <div className={`w-10 h-10 rounded-full flex items-center justify-center shrink-0 ${item.status === 'processing' ? 'bg-blue-50 text-blue-500' : item.status === 'success' ? 'bg-[#00D655]/10 text-[#00D655]' : item.status === 'error' ? 'bg-red-100 text-red-500' : 'bg-gray-100 text-gray-400'}`}>
-                                        {item.status === 'idle' && <Icon name="FileSpreadsheet" size={20} />}
-                                        {item.status === 'processing' && <div className="animate-spin"><Icon name="Loader2" size={20} /></div>}
-                                        {item.status === 'success' && <Icon name="Check" size={20} />}
-                                        {item.status === 'error' && <Icon name="AlertTriangle" size={20} />}
-                                    </div>
-
-                                    <div className="flex-1 min-w-0">
-                                        <h3 className={`text-sm font-semibold truncate ${item.status === 'error' ? 'text-red-600' : 'text-[#1D1D1F]'}`}>
-                                            {item.file.name}
-                                            {item.targetProject && (
-                                                <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-blue-100 text-blue-700 border border-blue-200">
-                                                    {item.targetProject}
-                                                </span>
-                                            )}
-                                        </h3>
-                                        {item.status === 'error' ? <p className="text-xs text-red-500 font-bold mt-0.5">{item.errorMessage}</p> : <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">{(item.file.size / 1024).toFixed(0)} KB</p>}
-                                    </div>
-
-                                    <div className="flex items-center gap-3 border-l pl-3 border-gray-100">
-                                        <div className="flex flex-col items-end group">
-                                            <label className="text-[9px] font-bold uppercase mb-0.5 mr-1 text-gray-300 group-hover:text-blue-500 transition-colors">Data Corte</label>
-                                            <input type="date" value={item.cutoffDate} onChange={e => updateItemField(item.id, 'cutoffDate', e.target.value)} className="ios-input w-28 p-1.5 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:bg-white focus:border-[#00D655]" />
-                                        </div>
-                                        <div className="flex flex-col items-end group">
-                                            <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${!isCodeValid(item.manualCode) ? 'text-red-500' : 'text-gray-300 group-hover:text-[#00D655]'}`}>Sigla</label>
-                                            <input
-                                                type="text" maxLength={3}
-                                                className={`ios-input w-16 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none focus:bg-white ${!isCodeValid(item.manualCode) ? 'border-red-300 bg-red-50 text-red-800 placeholder-red-300' : 'border-gray-200 bg-gray-50 text-[#1D1D1F] focus:border-[#00D655]'}`}
-                                                placeholder="???" value={item.manualCode}
-                                                onChange={e => updateItemField(item.id, 'manualCode', e.target.value)}
-                                                title={!isCodeValid(item.manualCode) ? "Sigla obrigatória" : ""}
-                                            />
-                                        </div>
-                                        <button onClick={() => removeFile(item.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors rounded-full hover:bg-gray-50"><Icon name="X" size={16} /></button>
-                                    </div>
-                                </div>
+                                <FileItem
+                                    key={item.id}
+                                    item={item}
+                                    isCodeValid={isCodeValid}
+                                    onUpdateField={updateItemField}
+                                    onRemove={removeFile}
+                                />
                             ))}
                         </div>
                     </div>
@@ -324,7 +259,7 @@ function App() {
                 <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-10">
                     <div className={`flex items-center gap-3 px-4 py-2 rounded-full shadow-sm border transition-colors ${processedData.length === 0 && fileQueue.some(f => f.status === 'error') ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-100 text-gray-600'}`}>
                         <Icon name="Info" size={16} />
-                        <span className="text-sm font-medium">{uploadStatus || 'Aguardando arquivos...'}</span>
+                        <span className="text-sm font-medium">{uploadStatus || 'Aguardando...'}</span>
                         {isProcessing && <span className="ml-2 text-xs font-bold bg-blue-100 text-blue-600 px-2 py-1 rounded">{processProgress.current}/{processProgress.total}</span>}
                     </div>
                     <div className="flex gap-3">

@@ -3,34 +3,27 @@ import * as XLSX from 'xlsx';
 import { parseExcelDate } from '../modules/dateParser';
 import { parseCurrency, calculateEconomySafe } from '../modules/currencyMath';
 import { calculateDaysLate, determineRisk, shouldSkipRow } from '../modules/businessRules';
-// IMPORTANTE: Importar as constantes centralizadas
 import { FINAL_HEADERS, EGS_MAPPING, PROJECT_MAPPING, VALID_PROJECT_CODES } from '../config/constants';
 
 const REQUIRED_ID_COLUMN = ['instalação', 'instalacao'];
 const FINANCIAL_TERMS = ['valor', 'custo', 'tarifa', 'total', 'referência', 'vencimento'];
 
-// Função de Normalização Estrita
+// Normalização estrita de projeto
 const normalizeProject = (raw: any, row: any): string | null => {
     let p = String(raw || "").trim().toUpperCase();
     if (!p) return null;
 
-    // 1. Tenta mapear pelo nome (ex: "LUA NOVA" -> "LNV")
-    // Se não estiver no mapa, assume que a string já é o código (ex: "LNV")
+    // Tenta mapear ou usa o próprio
     let mapped = PROJECT_MAPPING[p] || p;
 
-    // 2. Lógica Especial Era Verde (Resolve EVD genérico para EMG ou ESP)
+    // Lógica Era Verde
     if (mapped === 'EVD' || p.startsWith('ERA VERDE')) {
         const uf = String(row["UF"] || row["Estado"] || "").trim().toUpperCase();
         mapped = uf === 'MG' ? 'EMG' : 'ESP';
     }
 
-    // 3. Validação Final: O código resultante existe na lista permitida?
-    if (VALID_PROJECT_CODES.includes(mapped)) {
-        return mapped;
-    }
-
-    // Se chegou aqui, é um código desconhecido (ex: "XYZ", "PROJETO X")
-    return null;
+    // Validação final
+    return VALID_PROJECT_CODES.includes(mapped) ? mapped : null;
 };
 
 self.onmessage = async (e: MessageEvent) => {
@@ -39,7 +32,7 @@ self.onmessage = async (e: MessageEvent) => {
     try {
         const workbook = XLSX.read(fileBuffer, { type: 'array' });
 
-        // --- MODO 1: ANÁLISE ---
+        // --- MODO 1: ANÁLISE DE ESTRUTURA ---
         if (action === 'analyze') {
             const detectedProjects = new Set<string>();
 
@@ -47,15 +40,16 @@ self.onmessage = async (e: MessageEvent) => {
                 const sheet = workbook.Sheets[sheetName];
                 const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
-                // Scan cabeçalho
                 let headerRowIndex = -1;
                 let bestMatchCount = 0;
+                // Scan rápido (primeiras 50 linhas)
                 for (let i = 0; i < Math.min(rawData.length, 50); i++) {
                     const row = rawData[i];
                     if (!row || row.length === 0) continue;
                     const rowStr = row.map(c => String(c).toLowerCase());
                     const hasId = rowStr.some(cell => REQUIRED_ID_COLUMN.some(k => cell.includes(k)));
                     const financialMatches = rowStr.filter(cell => FINANCIAL_TERMS.some(term => cell.includes(term))).length;
+
                     if (hasId && financialMatches >= 2 && financialMatches > bestMatchCount) {
                         bestMatchCount = financialMatches;
                         headerRowIndex = i;
@@ -66,6 +60,7 @@ self.onmessage = async (e: MessageEvent) => {
 
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
+                // Verifica se há coluna PROJETO e extrai siglas únicas
                 sheetData.forEach(row => {
                     const rawProj = row["Projeto"] || row["PROJETO"];
                     if (rawProj) {
@@ -79,7 +74,7 @@ self.onmessage = async (e: MessageEvent) => {
             return;
         }
 
-        // --- MODO 2: PROCESSAMENTO ---
+        // --- MODO 2: PROCESSAMENTO COMPLETO ---
         if (action === 'process') {
             const processedRows: any[] = [];
 
@@ -107,7 +102,7 @@ self.onmessage = async (e: MessageEvent) => {
                 const headerRow = rawData[headerRowIndex].map(c => String(c).toUpperCase().trim());
                 const hasProjectCol = headerRow.includes('PROJETO') || headerRow.includes('PROJETO');
 
-                // Validação de entrada manual obrigatória se não houver coluna
+                // Validação rigorosa: Se não tem coluna, exige manual
                 if (!hasProjectCol && (!manualCode || manualCode.trim() === "")) {
                     throw new Error("Coluna PROJETO ausente e sigla manual não informada.");
                 }
@@ -115,27 +110,19 @@ self.onmessage = async (e: MessageEvent) => {
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
                 sheetData.forEach(row => {
-                    // 1. Obter Projeto Bruto
+                    // 1. Obter Projeto
                     let rawProj = "";
                     if (hasProjectCol) rawProj = row["Projeto"] || row["PROJETO"];
+                    if (!rawProj) rawProj = manualCode; // Fallback se estiver vazio na linha
 
-                    // Se a coluna estiver vazia nesta linha específica ou não existir, usa o manual
-                    if (!rawProj || String(rawProj).trim() === "") {
-                        rawProj = manualCode;
-                    }
-
-                    // 2. Normalizar e Validar
+                    // 2. Normalizar
                     const finalProj = normalizeProject(rawProj, row);
+                    if (!finalProj) return; // Ignora lixo
 
-                    // SE FOR INVÁLIDO -> PULA A LINHA (Conforme "não deve aceitar")
-                    // Ou, se preferir lançar erro para parar tudo: 
-                    // if (!finalProj) throw new Error(`Sigla inválida encontrada: ${rawProj}`);
-                    if (!finalProj) return;
-
-                    // 3. Filtro de Target (Se o item da fila for específico para um projeto)
+                    // 3. Filtrar pelo alvo (se definido na fila)
                     if (targetProject && finalProj !== targetProject) return;
 
-                    // --- Processamento Normal ---
+                    // 4. Filtros de Negócio (Data e Cancelamento)
                     const normalizedRow: any = { ...row };
                     Object.entries(EGS_MAPPING).forEach(([orig, dest]) => { if (row[orig] !== undefined) normalizedRow[dest] = row[orig]; });
 
@@ -143,6 +130,7 @@ self.onmessage = async (e: MessageEvent) => {
                     const skipCheck = shouldSkipRow(refDate, cutoffDate, normalizedRow["Status"] || normalizedRow["Status Faturamento"]);
                     if (skipCheck.shouldSkip) return;
 
+                    // 5. Construção
                     const newRow: Record<string, any> = {};
                     newRow["PROJETO"] = finalProj;
 
