@@ -12,7 +12,8 @@ export interface FileQueueItem {
     file: File;
     id: number;
     manualCode: string;
-    cutoffDate: string; // Novo campo
+    targetProject?: string; // NOVO: Define qual projeto filtrar nesta passada
+    cutoffDate: string;
     status: 'idle' | 'processing' | 'success' | 'error';
     errorMessage: string;
 }
