@@ -1,3 +1,5 @@
+// src/config/constants.ts
+
 export const FINAL_HEADERS: readonly string[] = [
     "PROJETO",
     "Instalação", "Nome", "CNPJ/CPF", "Distribuidora", "Cep", "Endereço", "Cidade", "UF",
@@ -29,4 +31,24 @@ export const EGS_MAPPING: Record<string, string> = {
     "Valor Pago": "Valor Pago",
     "Multa/Juros": "Juros e Multa",
     "Data Pagamento": "Data de Pagamento"
+};
+
+// --- LISTA DE SIGLAS VÁLIDAS (FONTE DE VERDADE) ---
+export const VALID_PROJECT_CODES = ['LNV', 'ALA', 'EGS', 'MTX', 'EMG', 'ESP'];
+
+// --- MAPEAMENTO DE NOMES PARA SIGLAS ---
+export const PROJECT_MAPPING: Record<string, string> = {
+    // Lua Nova
+    'LN': 'LNV', 'LNV': 'LNV', 'LUA NOVA': 'LNV', 'LUA NOVA ENERGIA': 'LNV',
+    // Alagoas
+    'ALA': 'ALA', 'ALAGOAS': 'ALA', 'ALAGOAS ENERGIA': 'ALA',
+    // E3 / EGS
+    'EGS': 'EGS', 'E3': 'EGS', 'E3 ENERGIA': 'EGS',
+    // Matrix
+    'MX': 'MTX', 'MTX': 'MTX', 'MATRIX': 'MTX',
+    // Era Verde (Mapeamentos diretos)
+    'EMG': 'EMG', 'ERA VERDE ENERGIA - MG': 'EMG',
+    'ESP': 'ESP', 'ERA VERDE ENERGIA - SP': 'ESP',
+    // Era Verde (Genéricos para resolução via UF)
+    'EVD': 'EVD', 'ERA VERDE': 'EVD'
 };
