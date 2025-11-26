@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import Icon from './components/Icon';
-import { FINAL_HEADERS } from './config/constants';
+import { FINAL_HEADERS, VALID_PROJECT_CODES } from './config/constants'; // Importa lista de validos
 import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
 import ExcelWorker from './workers/excel.worker?worker';
 
@@ -35,7 +35,6 @@ function App() {
     const normalizeFiles = (fileList: FileList | File[]): File[] =>
         Array.from(fileList).filter(f => validExtensions.some(ext => f.name.toLowerCase().endsWith(ext)));
 
-    // --- FUNÇÃO PRINCIPAL: Adiciona e Analisa Projetos ---
     const addFilesToQueue = async (files: File[]) => {
         if (!files.length) return;
         setUploadStatus(`Analisando ${files.length} arquivo(s)...`);
@@ -44,7 +43,6 @@ function App() {
 
         for (const file of files) {
             try {
-                // 1. Cria Worker para analisar o conteúdo antes de adicionar
                 const buffer = await file.arrayBuffer();
                 const detectedProjects = await new Promise<string[]>((resolve) => {
                     const worker = new ExcelWorker();
@@ -56,7 +54,6 @@ function App() {
                     worker.onerror = () => { worker.terminate(); resolve([]); };
                 });
 
-                // 2. Se encontrou projetos, cria um item para cada
                 if (detectedProjects.length > 0) {
                     detectedProjects.forEach(proj => {
                         newItems.push({
@@ -70,7 +67,6 @@ function App() {
                         });
                     });
                 } else {
-                    // 3. Genérico (sem coluna projeto detectada)
                     newItems.push({
                         file: file,
                         id: Date.now() + Math.random(),
@@ -83,7 +79,7 @@ function App() {
                 }
 
             } catch (e) {
-                console.error("Erro ao analisar arquivo:", file.name);
+                console.error("Erro ao analisar:", file.name);
                 newItems.push({ file, id: Date.now(), manualCode: '', cutoffDate: getInitialDate('DEFAULT'), status: 'idle', errorMessage: '' });
             }
         }
@@ -103,11 +99,14 @@ function App() {
             if (it.id === id) {
                 if (field === 'manualCode') {
                     const newCode = value.toUpperCase();
+                    // Atualiza data se código for válido e tiver default
+                    const newDate = DEFAULT_CUTOFFS[newCode] ? getInitialDate(newCode) : it.cutoffDate;
+
                     return {
                         ...it,
                         manualCode: newCode,
-                        targetProject: newCode, // Assume filtro pelo novo código
-                        cutoffDate: DEFAULT_CUTOFFS[newCode] || it.cutoffDate,
+                        targetProject: newCode,
+                        cutoffDate: newDate,
                         status: 'idle', errorMessage: ''
                     };
                 }
@@ -119,10 +118,16 @@ function App() {
 
     const removeFile = (id: number) => setFileQueue(prev => prev.filter(it => it.id !== id));
 
-    /* ---------- EXECUÇÃO ---------- */
     const runBatch = async () => {
         const pendingItems = fileQueue.filter(f => f.status !== 'success');
         if (!pendingItems.length) { alert("Todos os arquivos já foram processados."); return; }
+
+        // Validação Prévia: Se houver códigos inválidos digitados manualmente, alerta e para.
+        const invalidItems = fileQueue.filter(f => f.manualCode && !VALID_PROJECT_CODES.includes(f.manualCode));
+        if (invalidItems.length > 0) {
+            alert(`Existem siglas inválidas na fila: ${invalidItems.map(i => i.manualCode).join(', ')}. Corrija antes de processar.`);
+            return;
+        }
 
         setIsProcessing(true);
         setProcessProgress({ current: 0, total: fileQueue.length });
@@ -172,7 +177,7 @@ function App() {
 
             } catch (err: any) {
                 hasErrors = true;
-                setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'error', errorMessage: err.message.substring(0, 50) } : it));
+                setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'error', errorMessage: err.message.substring(0, 60) } : it));
             }
         }
 
@@ -204,13 +209,16 @@ function App() {
         setFileQueue([]); setProcessedData([]); setUploadStatus('');
     };
 
+    // Helper para checar validade visualmente
+    const isCodeValid = (code: string) => !code || VALID_PROJECT_CODES.includes(code);
+
     return (
         <div className="min-h-screen pb-20 relative bg-[#F5F5F7]">
             <header className="glass-header sticky top-0 z-40 px-6 py-4 flex justify-between items-center mb-8">
                 <div className="flex items-center gap-4">
                     <img src="https://hube.energy/wp-content/uploads/2024/10/Logo-1.svg" className="h-8 w-auto" alt="Hube Logo" onError={e => ((e.target as HTMLImageElement).style.display = 'none')} />
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
-                    <div><h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v12.1</span></h1></div>
+                    <div><h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v13.0</span></h1></div>
                 </div>
                 <div className="flex items-center gap-4">
                     {fileQueue.length > 0 && (
@@ -220,37 +228,13 @@ function App() {
             </header>
 
             <main className="max-w-5xl mx-auto px-6">
-
-                {/* 1. ÁREA DE DRAG & DROP (SEMPRE VISÍVEL) */}
-                <div
-                    onDragOver={onDragOver}
-                    onDragLeave={onDragLeave}
-                    onDrop={onDrop}
-                    className={`
-                        drop-zone relative rounded-3xl flex flex-col items-center justify-center text-center p-8 mb-8 border-2 border-dashed transition-all duration-300
-                        ${isDragOver ? 'border-blue-500 bg-blue-50 scale-[1.01]' : 'border-gray-200 hover:border-gray-300'}
-                        ${fileQueue.length > 0 ? 'h-40' : 'h-64'} 
-                    `}
-                >
-                    <input
-                        type="file"
-                        multiple
-                        accept=".xlsx,.xls,.csv"
-                        onChange={handleFileUpload}
-                        className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
-                    />
-                    <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform">
-                        <Icon name="UploadCloud" size={32} className="text-blue-500" />
-                    </div>
-                    <h3 className="text-xl font-bold text-gray-900 mb-2">
-                        {fileQueue.length > 0 ? 'Arrastar mais arquivos' : 'Arraste seus arquivos aqui'}
-                    </h3>
-                    <p className="text-gray-500 max-w-md mx-auto">
-                        {fileQueue.length > 0 ? 'Ou clique para adicionar à fila' : 'Processamento automático de todas as abas.'}
-                    </p>
+                <div onDragOver={onDragOver} onDragLeave={onDragLeave} onDrop={onDrop} className={`drop-zone relative rounded-3xl flex flex-col items-center justify-center text-center p-8 mb-8 border-2 border-dashed transition-all duration-300 ${isDragOver ? 'border-blue-500 bg-blue-50 scale-[1.01]' : 'border-gray-200 hover:border-gray-300'} ${fileQueue.length > 0 ? 'h-40' : 'h-64'}`}>
+                    <input type="file" multiple accept=".xlsx,.xls,.csv" onChange={handleFileUpload} className="absolute inset-0 w-full h-full opacity-0 cursor-pointer" />
+                    <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><Icon name="UploadCloud" size={32} className="text-blue-500" /></div>
+                    <h3 className="text-xl font-bold text-gray-900 mb-2">{fileQueue.length > 0 ? 'Arrastar mais arquivos' : 'Arraste seus arquivos aqui'}</h3>
+                    <p className="text-gray-500 max-w-md mx-auto">{fileQueue.length > 0 ? 'Ou clique para adicionar à fila' : 'Processamento automático de todas as abas.'}</p>
                 </div>
 
-                {/* 2. LISTA DE ARQUIVOS (VISÍVEL APENAS SE HOUVER ITENS) */}
                 {fileQueue.length > 0 && (
                     <div className="flex-1 flex flex-col mb-8">
                         <div className="flex justify-between items-center mb-4">
@@ -276,10 +260,7 @@ function App() {
                                             {item.file.name}
                                             {item.targetProject && <span className="ml-2 text-xs font-bold text-blue-500 bg-blue-50 px-2 py-0.5 rounded">[{item.targetProject}]</span>}
                                         </h3>
-                                        {item.status === 'error' ?
-                                            <p className="text-xs text-red-500 font-bold mt-0.5">{item.errorMessage}</p> :
-                                            <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">{(item.file.size / 1024).toFixed(0)} KB</p>
-                                        }
+                                        {item.status === 'error' ? <p className="text-xs text-red-500 font-bold mt-0.5">{item.errorMessage}</p> : <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">{(item.file.size / 1024).toFixed(0)} KB</p>}
                                     </div>
 
                                     <div className="flex items-center gap-3 border-l pl-3 border-gray-100">
@@ -288,8 +269,16 @@ function App() {
                                             <input type="date" value={item.cutoffDate} onChange={e => updateItemField(item.id, 'cutoffDate', e.target.value)} className="ios-input w-28 p-1.5 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:bg-white focus:border-[#00D655]" />
                                         </div>
                                         <div className="flex flex-col items-end group">
-                                            <label className="text-[9px] font-bold uppercase mb-0.5 mr-1 text-gray-300">Sigla</label>
-                                            <input type="text" maxLength={3} className={`ios-input w-16 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none ${item.status === 'error' && !item.manualCode ? 'border-red-300 bg-red-50 placeholder-red-300' : 'border-gray-200 bg-gray-50'}`} placeholder="???" value={item.manualCode} onChange={e => updateItemField(item.id, 'manualCode', e.target.value)} />
+                                            <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${!isCodeValid(item.manualCode) ? 'text-red-500' : 'text-gray-300'}`}>Sigla</label>
+                                            <input
+                                                type="text"
+                                                maxLength={3}
+                                                className={`ios-input w-16 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none focus:bg-white ${!isCodeValid(item.manualCode) ? 'border-red-300 bg-red-50 text-red-800 placeholder-red-300 focus:ring-red-200' : 'border-gray-200 bg-gray-50 text-[#1D1D1F] focus:border-[#00D655]'}`}
+                                                placeholder="???"
+                                                value={item.manualCode}
+                                                onChange={e => updateItemField(item.id, 'manualCode', e.target.value)}
+                                                title={!isCodeValid(item.manualCode) ? "Sigla inválida" : ""}
+                                            />
                                         </div>
                                         <button onClick={() => removeFile(item.id)} className="p-2 text-gray-300 hover:text-red-500 transition-colors rounded-full hover:bg-gray-50"><Icon name="X" size={16} /></button>
                                     </div>
