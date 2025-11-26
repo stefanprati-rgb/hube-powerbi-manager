@@ -3,9 +3,20 @@ import React, { useState, useCallback, useMemo } from 'react';
 import * as XLSX from 'xlsx';
 import Icon from './components/Icon';
 import { FINAL_HEADERS } from './config/constants';
-import { processSheetData } from './modules/sheetProcessor';
-import { readExcelFile } from './utils/excelHelpers';
 import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
+// O Vite trata imports com ?worker nativamente para criar Web Workers
+import ExcelWorker from './workers/excel.worker?worker';
+
+// Configurações de datas de corte padrão (YYYY-MM-DD)
+const DEFAULT_CUTOFFS: Record<string, string> = {
+    'LNV': '2025-01-01',
+    'ALA': '2025-01-01',
+    'ESP': '2025-05-01',
+    'EMG': '2025-05-01',
+    'EGS': '2025-06-01',
+    'MTX': '2025-01-01',
+    'DEFAULT': '2025-01-01'
+};
 
 function App() {
     /* ---------- state ---------- */
@@ -15,26 +26,67 @@ function App() {
     const [isDragOver, setIsDragOver] = useState<boolean>(false);
     const [uploadStatus, setUploadStatus] = useState<string>('');
     const [processProgress, setProcessProgress] = useState<ProcessingProgress>({ current: 0, total: 0 });
-    const [cutoffDate, setCutoffDate] = useState<string>('2025-06-01');
 
     /* ---------- helpers ---------- */
     const validExtensions = useMemo(() => ['.xlsx', '.xls', '.csv'], []);
 
-    /* ---------- file handling ---------- */
+    // Tenta recuperar a última data usada para este projeto do LocalStorage
+    const getInitialDate = (projCode: string = 'DEFAULT') => {
+        const saved = localStorage.getItem(`cutoff_${projCode.toUpperCase()}`);
+        if (saved) return saved;
+        return DEFAULT_CUTOFFS[projCode.toUpperCase()] || DEFAULT_CUTOFFS['DEFAULT'];
+    };
+
     const normalizeFiles = (fileList: FileList | File[]): File[] =>
         Array.from(fileList).filter(f =>
             validExtensions.some(ext => f.name.toLowerCase().endsWith(ext))
         );
 
+    // ATUALIZAÇÃO AQUI: Lógica de deteção de nomes refinada
     const addFilesToQueue = (files: File[]) => {
         if (!files.length) return;
-        const newItems: FileQueueItem[] = files.map(f => ({
-            file: f,
-            id: Date.now() + Math.random(),
-            manualCode: '',
-            status: 'idle',
-            errorMessage: ''
-        }));
+
+        const newItems: FileQueueItem[] = files.map(f => {
+            let detectedProj = '';
+            const nameUpper = f.name.toUpperCase();
+
+            // Lua Nova
+            if (nameUpper.includes('LUA NOVA') || nameUpper.includes('LNV')) detectedProj = 'LNV';
+
+            // Alagoas
+            else if (nameUpper.includes('ALAGOAS') || nameUpper.includes('ALA')) detectedProj = 'ALA';
+
+            // Matrix
+            else if (nameUpper.includes('MATRIX') || nameUpper.includes('MTX')) detectedProj = 'MTX';
+
+            // E3 Energia (Antiga EGS)
+            else if (nameUpper.includes('E3 ENERGIA') || nameUpper.includes('EGS')) detectedProj = 'EGS';
+
+            // Era Verde (Tenta diferenciar MG de SP pelo nome do arquivo)
+            else if (nameUpper.includes('ERA VERDE') || nameUpper.includes('EVD')) {
+                if (nameUpper.includes('MG')) detectedProj = 'EMG';
+                else if (nameUpper.includes('SP')) detectedProj = 'ESP';
+                else detectedProj = 'EVD'; // Genérico, o worker resolverá pela coluna UF
+            }
+
+            // Data Inicial (Prioriza o padrão ou salvo no localStorage)
+            let initialDate = getInitialDate(detectedProj || 'DEFAULT');
+
+            // Se for Era Verde Genérico (EVD), usamos a data base de SP/MG (maio/25)
+            if (detectedProj === 'EVD') {
+                initialDate = getInitialDate('ESP');
+            }
+
+            return {
+                file: f,
+                id: Date.now() + Math.random(),
+                manualCode: detectedProj,
+                cutoffDate: initialDate,
+                status: 'idle',
+                errorMessage: ''
+            };
+        });
+
         setFileQueue(prev => [...prev, ...newItems]);
         setUploadStatus(`${files.length} arquivo(s) adicionado(s).`);
     };
@@ -59,24 +111,39 @@ function App() {
         addFilesToQueue(files);
     };
 
-    const updateManualCode = (id: number, code: string) => {
-        setFileQueue(prev =>
-            prev.map(it =>
-                it.id === id ? { ...it, manualCode: code, status: 'idle', errorMessage: '' } : it
-            )
-        );
+    const updateItemField = (id: number, field: 'manualCode' | 'cutoffDate', value: string) => {
+        setFileQueue(prev => prev.map(it => {
+            if (it.id === id) {
+                // Se o usuário mudar o código manualmente, atualizamos a data se houver um default
+                if (field === 'manualCode') {
+                    const newCode = value.toUpperCase();
+                    if (DEFAULT_CUTOFFS[newCode] || localStorage.getItem(`cutoff_${newCode}`)) {
+                        return {
+                            ...it,
+                            manualCode: newCode,
+                            cutoffDate: getInitialDate(newCode),
+                            status: 'idle',
+                            errorMessage: ''
+                        };
+                    }
+                    return { ...it, manualCode: newCode, status: 'idle', errorMessage: '' };
+                }
+                return { ...it, [field]: value, status: 'idle', errorMessage: '' };
+            }
+            return it;
+        }));
     };
 
     const removeFile = (id: number) => {
         setFileQueue(prev => prev.filter(it => it.id !== id));
     };
 
-    /* ---------- batch processing ---------- */
+    /* ---------- batch processing (VIA WORKER) ---------- */
     const runBatch = async () => {
         if (!fileQueue.length) return;
         setIsProcessing(true);
         setProcessProgress({ current: 0, total: fileQueue.length });
-        setUploadStatus('Iniciando...');
+        setUploadStatus('Iniciando processamento em segundo plano...');
 
         const allData: ProcessedRow[] = [];
         let hasErrors = false;
@@ -84,90 +151,56 @@ function App() {
         for (let i = 0; i < fileQueue.length; i++) {
             const item = fileQueue[i];
             setProcessProgress({ current: i + 1, total: fileQueue.length });
-            setUploadStatus(
-                `Processando ${i + 1}/${fileQueue.length}: ${item.file.name}...`
-            );
+            setUploadStatus(`Processando ${i + 1}/${fileQueue.length}: ${item.file.name}...`);
 
-            setFileQueue(prev =>
-                prev.map((it, idx) =>
-                    idx === i ? { ...it, status: 'processing' } : it
-                )
-            );
+            setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'processing' } : it));
 
             try {
-                // 1. Lê e valida estrutura básica
-                const sheets = await readExcelFile(item.file);
-                let itemHasMissingProjectError = false;
+                // Salva a data usada
+                if (item.manualCode) {
+                    localStorage.setItem(`cutoff_${item.manualCode}`, item.cutoffDate);
+                }
 
-                // 2. Verifica se precisamos pedir o código manual ANTES de processar
-                if (!item.manualCode || item.manualCode.trim() === '') {
-                    const missingProjectColumn = sheets.some(sheet => {
-                        const headers = Object.keys(sheet.rows[0] || {}).map(k => k.toLowerCase());
-                        return !headers.includes('projeto');
+                const buffer = await item.file.arrayBuffer();
+
+                const processedRows = await new Promise<ProcessedRow[]>((resolve, reject) => {
+                    const worker = new ExcelWorker();
+
+                    worker.postMessage({
+                        fileBuffer: buffer,
+                        fileName: item.file.name,
+                        manualCode: item.manualCode,
+                        cutoffDate: item.cutoffDate
                     });
 
-                    if (missingProjectColumn) {
-                        itemHasMissingProjectError = true;
-                    }
-                }
+                    worker.onmessage = (e) => {
+                        worker.terminate();
+                        if (e.data.success) {
+                            resolve(e.data.rows);
+                        } else {
+                            reject(new Error(e.data.error || "Erro desconhecido no worker"));
+                        }
+                    };
 
-                if (itemHasMissingProjectError) {
-                    setFileQueue(prev =>
-                        prev.map((it, idx) =>
-                            idx === i
-                                ? {
-                                    ...it,
-                                    status: 'error',
-                                    errorMessage: '⚠️ Coluna PROJETO ausente. Digite o código.'
-                                }
-                                : it
-                        )
-                    );
-                    hasErrors = true;
-                    continue; // Pula este arquivo
-                }
-
-                // 3. Processamento Real
-                const fileRows: ProcessedRow[] = [];
-                sheets.forEach(sheet => {
-                    const result = processSheetData(
-                        sheet.rows,
-                        item.file.name,
-                        sheet.sheetName,
-                        item.manualCode,
-                        cutoffDate
-                    );
-                    if (result.rows.length) {
-                        fileRows.push(...result.rows);
-                    }
+                    worker.onerror = (err) => {
+                        worker.terminate();
+                        reject(new Error("Falha crítica no Worker de processamento."));
+                    };
                 });
 
-                allData.push(...fileRows);
-
-                setFileQueue(prev =>
-                    prev.map((it, idx) =>
-                        idx === i
-                            ? {
-                                ...it,
-                                status: 'success',
-                                errorMessage: ''
-                            }
-                            : it
-                    )
-                );
+                if (processedRows.length > 0) {
+                    allData.push(...processedRows);
+                    setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '' } : it));
+                } else {
+                    // Sucesso mas sem linhas (ex: tudo filtrado)
+                    setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '' } : it));
+                }
 
             } catch (err: any) {
                 console.error(err);
                 hasErrors = true;
                 const errorMsg = err.message || 'Erro desconhecido';
-
-                setFileQueue(prev =>
-                    prev.map((it, idx) =>
-                        idx === i
-                            ? { ...it, status: 'error', errorMessage: errorMsg.substring(0, 40) }
-                            : it
-                    )
-                );
+                setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'error', errorMessage: errorMsg.substring(0, 50) } : it));
             }
         }
 
@@ -176,7 +209,7 @@ function App() {
             setUploadStatus(`Concluído! ${allData.length} linhas processadas.`);
         } else {
             if (allData.length > 0) setProcessedData(allData);
-            setUploadStatus('Atenção: Resolva as pendências indicadas.');
+            setUploadStatus('Atenção: Processo finalizado com erros em alguns arquivos.');
         }
         setIsProcessing(false);
     };
@@ -222,7 +255,7 @@ function App() {
     };
 
     return (
-        <div className="min-h-screen pb-20 relative">
+        <div className="min-h-screen pb-20 relative bg-[#F5F5F7]">
             <header className="glass-header sticky top-0 z-40 px-6 py-4 flex justify-between items-center mb-8">
                 <div className="flex items-center gap-4">
                     <img
@@ -233,27 +266,11 @@ function App() {
                     />
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
                     <div>
-                        <h1 className="text-xl font-bold text-gray-900">Power BI Manager</h1>
+                        <h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v11.0</span></h1>
                     </div>
                 </div>
 
                 <div className="flex items-center gap-4">
-                    <div className="flex items-center gap-2 bg-white px-4 py-2 rounded-lg border border-gray-200 shadow-sm">
-                        <Icon name="Calendar" size={16} className="text-gray-400" />
-                        <div className="flex flex-col">
-                            <label className="text-[9px] font-bold uppercase text-gray-400 mb-0.5">
-                                Data de Corte
-                            </label>
-                            <input
-                                type="date"
-                                value={cutoffDate}
-                                onChange={e => setCutoffDate(e.target.value)}
-                                className="text-sm font-semibold text-gray-900 border-none outline-none bg-transparent cursor-pointer"
-                                title="Apenas dados a partir desta data serão processados"
-                            />
-                        </div>
-                    </div>
-
                     {fileQueue.length > 0 && (
                         <button
                             onClick={clearAll}
@@ -332,25 +349,42 @@ function App() {
                                         )}
                                     </div>
 
+                                    {/* Controles Individuais: Data de Corte e Código */}
                                     <div className="flex items-center gap-3 border-l pl-3 border-gray-100">
+
+                                        {/* Seletor de Data Individual */}
+                                        <div className="flex flex-col items-end group">
+                                            <label className="text-[9px] font-bold uppercase mb-0.5 mr-1 text-gray-300 group-hover:text-blue-500 transition-colors">
+                                                Data Corte
+                                            </label>
+                                            <input
+                                                type="date"
+                                                value={item.cutoffDate}
+                                                onChange={e => updateItemField(item.id, 'cutoffDate', e.target.value)}
+                                                className="ios-input w-28 p-1.5 text-xs font-semibold text-gray-700 bg-gray-50 border border-gray-200 rounded-lg outline-none focus:bg-white focus:border-[#00D655]"
+                                                title="Faturas anteriores a esta data serão ignoradas"
+                                            />
+                                        </div>
+
                                         <div className="flex flex-col items-end group">
                                             <label
                                                 className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${item.status === 'error' ? 'text-red-500' : 'text-gray-300 group-hover:text-[#00D655]'
                                                     }`}
                                             >
-                                                Cód. Projeto
+                                                Sigla (3)
                                             </label>
                                             <input
                                                 type="text"
-                                                className={`ios-input w-28 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none placeholder-gray-300 focus:bg-white
+                                                maxLength={3}
+                                                className={`ios-input w-16 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none placeholder-gray-300 focus:bg-white
                           ${item.status === 'error'
                                                         ? 'border-red-300 bg-red-50 text-red-800 placeholder-red-200 focus:border-red-500 focus:ring-red-200'
                                                         : 'border-gray-200 text-[#1D1D1F] bg-gray-50'
                                                     }
                         `}
-                                                placeholder={item.status === 'error' ? 'DIGITE AQUI' : 'Opcional'}
+                                                placeholder="???"
                                                 value={item.manualCode}
-                                                onChange={e => updateManualCode(item.id, e.target.value)}
+                                                onChange={e => updateItemField(item.id, 'manualCode', e.target.value)}
                                             />
                                         </div>
                                         <button
