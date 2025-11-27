@@ -146,9 +146,9 @@ self.onmessage = async (e: MessageEvent) => {
                         if (statusLower.includes('quitado parc')) {
                             status = 'Negociado';
                         } else if (statusLower === 'pago' || statusLower === 'quitado') {
-                            status = 'PAGO';
+                            status = 'Pago';
                         } else if (statusLower === 'atrasado' || statusLower.includes('atraso')) {
-                            status = 'ATRASADO';
+                            status = 'Atrasado';
                         } else if (statusLower.includes('acordo') || statusLower.includes('negociado')) {
                             status = 'Negociado';
                         } else {
