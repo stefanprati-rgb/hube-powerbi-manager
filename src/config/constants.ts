@@ -30,7 +30,8 @@ export const EGS_MAPPING: Record<string, string> = {
     "Status Pagamento": "Status",
     "Valor Pago": "Valor Pago",
     "Multa/Juros": "Juros e Multa",
-    "Data Pagamento": "Data de Pagamento"
+    "Data Pagamento": "Data de Pagamento",
+    "Credito kWh": "Créd. Consumido"
 };
 
 // --- LISTA DE SIGLAS VÁLIDAS (FONTE DE VERDADE) ---
