@@ -17,6 +17,7 @@ export const FINAL_HEADERS: readonly string[] = [
 ] as const;
 
 export const EGS_MAPPING: Record<string, string> = {
+    "Região": "Região", // Adicionado conforme solicitado
     "Instalação": "Instalação",
     "CNPJ": "CNPJ/CPF",
     "Distribuidora": "Distribuidora",
