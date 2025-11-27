@@ -24,7 +24,6 @@ export const EGS_MAPPING: Record<string, string> = {
     "Razão Social": "Nome",
     "Referência": "Mês de Referência",
     "Valor sem desconto": "Custo sem GD R$",
-    "Valor liberado": "Custo com GD R$",
     "Data emissão": "Data de Emissão",
     "Data Vencimento": "Vencimento",
     "Valor emitido": "Valor Final R$",

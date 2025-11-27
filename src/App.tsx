@@ -6,10 +6,9 @@ import { db } from './config/firebase';
 import Icon from './components/Icon';
 import FileItem from './components/FileItem';
 import { FINAL_HEADERS, VALID_PROJECT_CODES } from './config/constants';
-import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
+import type { FileQueueItem, ProcessingProgress, ProcessedRow, EGSFinancialMap } from './types';
 import ExcelWorker from './workers/excel.worker?worker';
 
-// Defaults de segurança (caso não haja internet ou banco vazio)
 const DEFAULT_CUTOFFS: Record<string, string> = {
     'LNV': '2025-01-01', 'ALA': '2025-01-01', 'ESP': '2025-05-01',
     'EMG': '2025-05-01', 'EGS': '2025-06-01', 'MTX': '2025-01-01',
@@ -24,11 +23,9 @@ function App() {
     const [isDragOver, setIsDragOver] = useState<boolean>(false);
     const [uploadStatus, setUploadStatus] = useState<string>('');
     const [processProgress, setProcessProgress] = useState<ProcessingProgress>({ current: 0, total: 0 });
-
-    // Estado para guardar datas vindas da nuvem
     const [cloudCutoffs, setCloudCutoffs] = useState<Record<string, string>>(DEFAULT_CUTOFFS);
 
-    // --- Efeito: Carregar Memória da Nuvem ---
+    // Carrega configurações da nuvem
     useEffect(() => {
         const loadSettings = async () => {
             try {
@@ -36,10 +33,9 @@ function App() {
                 const docSnap = await getDoc(docRef);
                 if (docSnap.exists()) {
                     setCloudCutoffs(prev => ({ ...prev, ...docSnap.data() }));
-                    console.log("☁️ Datas sincronizadas com sucesso.");
                 }
             } catch (error) {
-                console.warn("Modo Offline ou erro no Firebase. Usando defaults locais.");
+                console.warn("Modo Offline ou erro no Firebase.");
             }
         };
         loadSettings();
@@ -57,6 +53,14 @@ function App() {
 
     const isCodeValid = (code: string) => code && VALID_PROJECT_CODES.includes(code.toUpperCase());
 
+    // Helper para identificar Relatório vs Base
+    const guessEGSFileType = (filename: string): 'base' | 'report' | undefined => {
+        const name = filename.toUpperCase();
+        if (name.includes('RELATÓRIO') || name.includes('DETALHE') || name.includes('RESUMO')) return 'report';
+        if (name.includes('BASE') || name.includes('CLIENTES')) return 'base';
+        return undefined; // Não conseguiu determinar
+    };
+
     /* --- Adição de Arquivos --- */
     const addFilesToQueue = async (files: File[]) => {
         if (!files.length) return;
@@ -64,7 +68,7 @@ function App() {
         setUploadStatus(`A analisar ${files.length} ficheiro(s)...`);
 
         const newItems: FileQueueItem[] = [];
-        await new Promise(resolve => setTimeout(resolve, 50)); // Yield UI
+        await new Promise(resolve => setTimeout(resolve, 50));
 
         for (const file of files) {
             try {
@@ -78,24 +82,41 @@ function App() {
 
                 if (detectedProjects.length > 0) {
                     detectedProjects.forEach(proj => {
+                        // Se for EGS, tenta adivinhar o tipo de arquivo
+                        let egsType: 'base' | 'report' | undefined = undefined;
+                        if (proj === 'EGS') {
+                            egsType = guessEGSFileType(file.name);
+                        }
+
                         newItems.push({
-                            file, id: Date.now() + Math.random(),
-                            manualCode: proj, targetProject: proj,
+                            file,
+                            id: Date.now() + Math.random(),
+                            manualCode: proj,
+                            targetProject: proj,
                             cutoffDate: getInitialDate(proj),
+                            egsFileType: egsType, // Define tipo inicial
                             status: 'idle', errorMessage: ''
                         });
                     });
                 } else {
                     newItems.push({
-                        file, id: Date.now() + Math.random(),
-                        manualCode: '', targetProject: undefined,
+                        file,
+                        id: Date.now() + Math.random(),
+                        manualCode: '',
+                        targetProject: undefined,
                         cutoffDate: getInitialDate('DEFAULT'),
                         status: 'idle', errorMessage: ''
                     });
                 }
             } catch (e) {
                 console.error("Erro:", file.name);
-                newItems.push({ file, id: Date.now(), manualCode: '', cutoffDate: getInitialDate('DEFAULT'), status: 'idle', errorMessage: 'Erro na leitura' });
+                newItems.push({
+                    file,
+                    id: Date.now(),
+                    manualCode: '',
+                    cutoffDate: getInitialDate('DEFAULT'),
+                    status: 'idle', errorMessage: 'Erro na leitura'
+                });
             }
         }
 
@@ -111,15 +132,23 @@ function App() {
     };
 
     /* --- Updates de UI --- */
-    const updateItemField = (id: number, field: 'manualCode' | 'cutoffDate', value: string) => {
+    const updateItemField = (id: number, field: 'manualCode' | 'cutoffDate' | 'egsFileType', value: string) => {
         setFileQueue(prev => prev.map(it => {
             if (it.id === id) {
                 if (field === 'manualCode') {
                     const newCode = value.toUpperCase();
-                    // Atualiza data se o código for válido
                     const newDate = cloudCutoffs[newCode] ? getInitialDate(newCode) : it.cutoffDate;
-                    return { ...it, manualCode: newCode, targetProject: newCode, cutoffDate: newDate, status: 'idle', errorMessage: '' };
+
+                    // Se mudou para EGS, tenta adivinhar o tipo se ainda não tiver
+                    let newEgsType = it.egsFileType;
+                    if (newCode === 'EGS' && !newEgsType) {
+                        newEgsType = guessEGSFileType(it.file.name);
+                    }
+
+                    return { ...it, manualCode: newCode, targetProject: newCode, cutoffDate: newDate, egsFileType: newEgsType, status: 'idle', errorMessage: '' };
                 }
+
+                // Atualização normal de campo
                 return { ...it, [field]: value, status: 'idle', errorMessage: '' };
             }
             return it;
@@ -133,38 +162,88 @@ function App() {
         const pendingItems = fileQueue.filter(f => f.status !== 'success');
         if (!pendingItems.length) { alert("Todos os arquivos já foram processados."); return; }
 
+        // 1. Validação de Siglas
         const invalidItems = pendingItems.filter(item => !isCodeValid(item.manualCode));
         if (invalidItems.length > 0) {
-            alert(`Erro: ${invalidItems.length} arquivo(s) sem Sigla válida. Preencha (LNV, ALA, etc) antes de processar.`);
+            alert(`Erro: Existem arquivos sem Sigla válida.`);
             setFileQueue(prev => prev.map(it => !isCodeValid(it.manualCode) && it.status !== 'success' ? { ...it, status: 'error', errorMessage: 'Sigla Obrigatória' } : it));
             return;
         }
 
+        // 2. Validação EGS (Base + Relatório)
+        const egsItems = fileQueue.filter(i => i.manualCode === 'EGS' && i.status !== 'success');
+        if (egsItems.length > 0) {
+            const hasBase = egsItems.some(i => i.egsFileType === 'base');
+            const hasReport = egsItems.some(i => i.egsFileType === 'report');
+
+            // Se tiver EGS na fila, PRECISA ter o par (Base + Relatório)
+            if (!hasBase || !hasReport) {
+                alert("Para processar EGS, é obrigatório ter:\n1. Arquivo 'Base de Clientes'\n2. Arquivo 'Relatório Operacional'\n\nVerifique a coluna 'Tipo de Arquivo' na lista.");
+                setFileQueue(prev => prev.map(it => it.manualCode === 'EGS' && !it.egsFileType ? { ...it, status: 'error', errorMessage: 'Selecione o Tipo' } : it));
+                return;
+            }
+        }
+
         setIsProcessing(true);
         setProcessProgress({ current: 0, total: fileQueue.length });
-        setUploadStatus('A processar...');
+        setUploadStatus('A preparar...');
 
+        // 3. Pré-processamento: Extrair dados financeiros dos relatórios EGS
+        let egsFinancialData: EGSFinancialMap = {};
+        const egsReports = fileQueue.filter(i => i.manualCode === 'EGS' && i.egsFileType === 'report');
+
+        if (egsReports.length > 0) {
+            setUploadStatus('A ler relatórios financeiros...');
+            for (const report of egsReports) {
+                try {
+                    const buffer = await report.file.arrayBuffer();
+                    const extracted = await new Promise<EGSFinancialMap>((resolve) => {
+                        const worker = new ExcelWorker();
+                        worker.postMessage({ action: 'extract_financials', fileBuffer: buffer });
+                        worker.onmessage = (e) => { worker.terminate(); resolve(e.data.success ? e.data.data : {}); };
+                        worker.onerror = () => { worker.terminate(); resolve({}); };
+                    });
+                    egsFinancialData = { ...egsFinancialData, ...extracted };
+                } catch (e) {
+                    console.error("Erro ao ler relatório:", report.file.name);
+                }
+            }
+        }
+
+        setUploadStatus('A processar bases...');
         const allData: ProcessedRow[] = [...processedData];
         let hasErrors = false;
-        const newCloudData: Record<string, string> = {}; // Para salvar no final
+        const newCloudData: Record<string, string> = {};
 
         for (let i = 0; i < fileQueue.length; i++) {
             const item = fileQueue[i];
+
+            // Relatórios são apenas para leitura, não geram linhas de saída diretas
+            if (item.manualCode === 'EGS' && item.egsFileType === 'report') {
+                setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success' } : it));
+                setProcessProgress(prev => ({ ...prev, current: i + 1 }));
+                continue;
+            }
+
             if (item.status === 'success') { setProcessProgress(prev => ({ ...prev, current: i + 1 })); continue; }
 
             setProcessProgress(prev => ({ ...prev, current: i + 1 }));
             setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'processing' } : it));
 
             try {
-                // Guarda a data para salvar na nuvem
                 if (item.manualCode) newCloudData[item.manualCode] = item.cutoffDate;
 
                 const buffer = await item.file.arrayBuffer();
                 const processedRows = await new Promise<ProcessedRow[]>((resolve, reject) => {
                     const worker = new ExcelWorker();
                     worker.postMessage({
-                        action: 'process', fileBuffer: buffer, fileName: item.file.name,
-                        manualCode: item.manualCode, cutoffDate: item.cutoffDate, targetProject: item.targetProject
+                        action: 'process',
+                        fileBuffer: buffer,
+                        fileName: item.file.name,
+                        manualCode: item.manualCode,
+                        cutoffDate: item.cutoffDate,
+                        targetProject: item.targetProject,
+                        egsFinancials: egsFinancialData // Envia o mapa financeiro
                     });
                     worker.onmessage = (e) => { worker.terminate(); if (e.data.success) resolve(e.data.rows); else reject(new Error(e.data.error)); };
                     worker.onerror = () => { worker.terminate(); reject(new Error("Falha no Worker")); };
@@ -174,7 +253,7 @@ function App() {
                     allData.push(...processedRows);
                     setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '' } : it));
                 } else {
-                    setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '0 linhas geradas' } : it));
+                    setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'success', errorMessage: '0 linhas (filtro data?)' } : it));
                 }
             } catch (err: any) {
                 hasErrors = true;
@@ -182,12 +261,12 @@ function App() {
             }
         }
 
-        // Salva na Nuvem (Memória Coletiva)
+        // Salvar na Nuvem
         if (Object.keys(newCloudData).length > 0) {
             try {
                 await setDoc(doc(db, "app_settings", "cutoffs"), newCloudData, { merge: true });
                 setCloudCutoffs(prev => ({ ...prev, ...newCloudData }));
-            } catch (e) { console.error("Erro ao salvar na nuvem", e); }
+            } catch (e) { console.error("Erro nuvem", e); }
         }
 
         if (!hasErrors) setUploadStatus(`Concluído! ${allData.length} linhas.`);
@@ -216,7 +295,7 @@ function App() {
                 <div className="flex items-center gap-4">
                     <img src="https://hube.energy/wp-content/uploads/2024/10/Logo-1.svg" className="h-8 w-auto" alt="Hube Logo" onError={e => ((e.target as HTMLImageElement).style.display = 'none')} />
                     <div className="h-6 w-px bg-gray-300 mx-2"></div>
-                    <h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v14.0 (Cloud)</span></h1>
+                    <h1 className="text-xl font-bold text-gray-900">Power BI Manager <span className="text-xs font-normal text-gray-500 ml-2">v15.0 (EGS Pair)</span></h1>
                 </div>
                 <div className="flex items-center gap-4">{fileQueue.length > 0 && <button onClick={clearAll} className="p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full transition-all"><Icon name="Trash" size={20} /></button>}</div>
             </header>

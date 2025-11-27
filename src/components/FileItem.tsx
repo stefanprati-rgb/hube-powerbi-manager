@@ -7,11 +7,15 @@ import { VALID_PROJECT_CODES } from '../config/constants';
 interface FileItemProps {
     item: FileQueueItem;
     isCodeValid: (code: string) => boolean;
-    onUpdateField: (id: number, field: 'manualCode' | 'cutoffDate', value: string) => void;
+    // Atualizado para aceitar o novo campo 'egsFileType'
+    onUpdateField: (id: number, field: 'manualCode' | 'cutoffDate' | 'egsFileType', value: string) => void;
     onRemove: (id: number) => void;
 }
 
 const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, onRemove }) => {
+    // Verifica se é projeto EGS para mostrar o seletor extra
+    const isEGS = item.manualCode === 'EGS';
+
     return (
         <div className={`
             relative bg-white rounded-2xl p-4 flex items-center gap-4 shadow-sm border transition-all duration-200 
@@ -55,6 +59,28 @@ const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, o
 
             {/* Controles */}
             <div className="flex items-center gap-3 border-l pl-3 border-gray-100">
+
+                {/* --- SELETOR ESPECIAL PARA EGS --- */}
+                {isEGS && (
+                    <div className="flex flex-col items-end group animate-fade-in-up">
+                        <label className="text-[9px] font-bold uppercase mb-0.5 mr-1 text-blue-500">
+                            Tipo de Arquivo
+                        </label>
+                        <select
+                            value={item.egsFileType || ''}
+                            onChange={e => onUpdateField(item.id, 'egsFileType', e.target.value)}
+                            className={`
+                                h-[26px] text-xs font-bold text-gray-700 bg-blue-50 border border-blue-200 rounded-lg outline-none focus:bg-white focus:border-blue-500 cursor-pointer
+                                ${!item.egsFileType ? 'ring-2 ring-red-100 border-red-300 text-red-500' : ''}
+                            `}
+                            title="Selecione se este arquivo é a Base de Clientes ou o Relatório Financeiro Complementar"
+                        >
+                            <option value="" disabled>Selecione...</option>
+                            <option value="base">Base de Clientes</option>
+                            <option value="report">Relatório Operacional</option>
+                        </select>
+                    </div>
+                )}
 
                 <div className="flex flex-col items-end group">
                     <label className="text-[9px] font-bold uppercase mb-0.5 mr-1 text-gray-300 group-hover:text-blue-500 transition-colors">
