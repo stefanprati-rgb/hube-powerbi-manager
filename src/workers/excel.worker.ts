@@ -1,8 +1,10 @@
 // src/workers/excel.worker.ts
 import * as XLSX from 'xlsx';
-import { parseExcelDate } from '../modules/dateParser';
+import { parseExcelDate, formatDateToBR } from '../modules/dateParser';
 import { parseCurrency, calculateEconomySafe } from '../modules/currencyMath';
 import { calculateDaysLate, determineRisk, shouldSkipRow } from '../modules/businessRules';
+// IMPORTANTE: Importar o novo normalizador
+import { normalizeInstallation, normalizeDistributor } from '../modules/stringNormalizer';
 import { FINAL_HEADERS, EGS_MAPPING, PROJECT_MAPPING, VALID_PROJECT_CODES } from '../config/constants';
 
 const REQUIRED_ID_COLUMN = ['instalação', 'instalacao'];
@@ -126,7 +128,9 @@ self.onmessage = async (e: MessageEvent) => {
                     const normalizedRow: any = { ...row };
                     Object.entries(EGS_MAPPING).forEach(([orig, dest]) => { if (row[orig] !== undefined) normalizedRow[dest] = row[orig]; });
 
-                    const refDate = parseExcelDate(normalizedRow["Mês de Referência"] || normalizedRow["Referência"]);
+                    const rawRefDate = normalizedRow["Mês de Referência"] || normalizedRow["Referência"];
+                    const refDate = parseExcelDate(rawRefDate);
+
                     const skipCheck = shouldSkipRow(refDate, cutoffDate, normalizedRow["Status"] || normalizedRow["Status Faturamento"]);
                     if (skipCheck.shouldSkip) return;
 
@@ -137,6 +141,22 @@ self.onmessage = async (e: MessageEvent) => {
                     FINAL_HEADERS.forEach(key => {
                         if (key !== "PROJETO") newRow[key] = normalizedRow[key] !== undefined ? normalizedRow[key] : "";
                     });
+
+                    // --- ATUALIZAÇÃO: Normalização de Dados ---
+                    // Instalação: Apenas números
+                    if (newRow["Instalação"]) {
+                        newRow["Instalação"] = normalizeInstallation(newRow["Instalação"]);
+                    }
+
+                    // Distribuidora: Caixa alta e sem _
+                    if (newRow["Distribuidora"]) {
+                        newRow["Distribuidora"] = normalizeDistributor(newRow["Distribuidora"]);
+                    }
+
+                    // Força o formato de Data BR na Referência
+                    if (refDate) {
+                        newRow["Mês de Referência"] = formatDateToBR(refDate);
+                    }
 
                     if (!newRow["Instalação"] && !newRow["CNPJ/CPF"]) return;
 
