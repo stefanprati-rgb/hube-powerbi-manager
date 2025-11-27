@@ -1,3 +1,5 @@
+// src/modules/dateParser.ts
+
 export const parseExcelDate = (dateVal: any): Date | null => {
     try {
         if (!dateVal) return null;
@@ -18,13 +20,13 @@ export const parseExcelDate = (dateVal: any): Date | null => {
         if (strVal.match(/^\d{1,2}[/-]\d{1,2}[/-]\d{4}/)) {
             const parts = strVal.split(/[-/]/);
             // Assumindo dia/mês/ano
-            return new Date(parts[2], parts[1] - 1, parts[0]);
+            return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
         }
 
         // Formato ISO YYYY-MM-DD
         if (strVal.includes('-') && strVal.split('-')[0].length === 4) {
             const parts = strVal.split('-');
-            return new Date(parts[0], parts[1] - 1, parts[2]);
+            return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
         }
 
         const parsed = new Date(dateVal);
@@ -34,4 +36,15 @@ export const parseExcelDate = (dateVal: any): Date | null => {
         console.warn("Falha ao processar data:", dateVal);
         return null;
     }
+};
+
+// NOVA FUNÇÃO: Formata Date para "DD/MM/AAAA"
+export const formatDateToBR = (date: Date | null): string => {
+    if (!date || isNaN(date.getTime())) return "";
+
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+
+    return `${day}/${month}/${year}`;
 };
