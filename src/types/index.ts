@@ -4,8 +4,9 @@ export interface ExcelRow {
     [key: string]: any;
 }
 
+// Interface opcional para tipagem mais rigorosa no worker
 export interface RawExcelRow {
-    [key: string]: any; // Permite indexação dinâmica, mas define os campos conhecidos abaixo
+    [key: string]: any;
     "Projeto"?: string;
     "PROJETO"?: string;
     "UF"?: string;
@@ -36,10 +37,20 @@ export interface FileQueueItem {
     file: File;
     id: number;
     manualCode: string;
-    targetProject?: string; // NOVO: Define qual projeto filtrar nesta passada
+    targetProject?: string; // Define se estamos a filtrar por um projeto específico
     cutoffDate: string;
     status: 'idle' | 'processing' | 'success' | 'error';
     errorMessage: string;
+}
+
+// --- NOVO: Estrutura para o cruzamento de dados EGS ---
+// Chave: "Instalação_Ano-Mês" (ex: "123456_2025-05")
+export interface EGSFinancialMap {
+    [key: string]: {
+        custoComGD: number;
+        custoSemGD: number;
+        economia: number | string;
+    };
 }
 
 export interface ProcessResult {
@@ -57,3 +68,9 @@ export interface ProcessingProgress {
     current: number;
     total: number;
 }
+
+// Tipos de Mensagens do Worker (para segurança de tipo)
+export type WorkerMessage =
+    | { action: 'analyze'; fileBuffer: ArrayBuffer }
+    | { action: 'extract_financials'; fileBuffer: ArrayBuffer }
+    | { action: 'process'; fileBuffer: ArrayBuffer; fileName: string; manualCode: string; cutoffDate: string; targetProject?: string; egsFinancials?: EGSFinancialMap };
