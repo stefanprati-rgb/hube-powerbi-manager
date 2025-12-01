@@ -1,10 +1,11 @@
+// src/modules/businessRules.ts
+
 export const calculateDaysLate = (dataVencimento: Date | null): number => {
     if (!dataVencimento || isNaN(dataVencimento.getTime())) return 0;
 
     const hoje = new Date();
     hoje.setHours(0, 0, 0, 0);
 
-    // Clona para não alterar a data original
     const vencimento = new Date(dataVencimento);
     vencimento.setHours(0, 0, 0, 0);
 
@@ -15,10 +16,10 @@ export const calculateDaysLate = (dataVencimento: Date | null): number => {
 };
 
 export const determineRisk = (status: any, daysLate: number): string => {
-    // REGRA ATUALIZADA:
-    // O risco é calculado sempre, independente do status (ex: "Em aberto", "Pago", etc).
-    // Baseia-se puramente nos dias passados desde o vencimento.
+    // ATUALIZADO: Risco baseado APENAS em dias de atraso
+    // Status não influencia mais o risco
 
+    if (daysLate === 0) return "Nenhum";
     if (daysLate <= 30) return "Baixo";
     if (daysLate <= 90) return "Médio";
     return "Alto";
@@ -42,13 +43,12 @@ export const shouldSkipRow = (
 
     // 2. Filtro de Data (Corte)
     if (rowDate && cutoffDateStr) {
-        // cutoffDateStr vem do input (YYYY-MM-DD)
         const [y, m, d] = cutoffDateStr.split('-').map(Number);
         const cutoff = new Date(y, m - 1, d);
         cutoff.setHours(0, 0, 0, 0);
 
         const checkDate = new Date(rowDate);
-        checkDate.setDate(1); // Normaliza para comparar apenas mês/ano
+        checkDate.setDate(1);
         checkDate.setHours(0, 0, 0, 0);
 
         if (checkDate < cutoff) {

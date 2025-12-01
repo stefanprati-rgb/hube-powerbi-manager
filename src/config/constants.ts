@@ -2,7 +2,8 @@
 
 export const FINAL_HEADERS: readonly string[] = [
     "PROJETO",
-    "Instalação", "Nome", "CNPJ/CPF", "Distribuidora", "Cep", "Endereço", "Cidade", "UF",
+    "Instalação", "Nome", "CNPJ/CPF", "Telefone", "E-mail", "Distribuidora",
+    "Cep", "Endereço", "Cidade", "UF",
     "Tipo de Pagamento", "Tipo Contrato", "Desconto contrato (%)", "Condição Comercial",
     "Data de Vencimento", "Mês de Referência", "Base para cálculo", "Tipo Cobrança",
     "Origem do cálculo", "Aprovação", "Data de Emissão", "Vencimento", "Crédito kWh",
@@ -27,22 +28,27 @@ export const EGS_MAPPING: Record<string, string> = {
     // Mapeamentos Financeiros (Base EGS)
     "Valor sem desconto": "Custo sem GD R$",
     "Valor liberado": "Custo com GD R$",
-    "CUSTO_S_GD": "Custo sem GD R$",      // Nova coluna identificada
-    "CUSTO_S_GD ": "Custo sem GD R$",     // Variante com espaço (comum em exportações)
-    "CUSTO_C_GD": "Custo com GD R$",      // Nova coluna identificada
-    "CUSTO_C_GD ": "Custo com GD R$",     // Variante com espaço
+    "CUSTO_S_GD": "Custo sem GD R$",
+    "CUSTO_S_GD ": "Custo sem GD R$",
+    "CUSTO_C_GD": "Custo com GD R$",
+    "CUSTO_C_GD ": "Custo com GD R$",
 
     "Data emissão": "Data de Emissão",
     "Data Vencimento": "Vencimento",
     "Valor emitido": "Valor Final R$",
     "Status Pagamento": "Status",
+    "Status Faturamento": "Status",
     "Valor Pago": "Valor Pago",
     "Multa/Juros": "Juros e Multa",
     "Data Pagamento": "Data de Pagamento",
 
-    // Outros mapeamentos úteis identificados na planilha
+    // Novos mapeamentos identificados
     "Créd. Consumido": "Crédito kWh",
-    "Credito kWh": "Crédito kWh"
+    "Credito kWh": "Crédito kWh",
+    "Telefone": "Telefone",
+    "E-MAIL DO PAGADOR": "E-mail",
+    "COD": "ID Boleto/Pix",
+    "COD BOLETO": "ID Boleto/Pix"
 };
 
 // --- LISTA DE SIGLAS VÁLIDAS (FONTE DE VERDADE) ---

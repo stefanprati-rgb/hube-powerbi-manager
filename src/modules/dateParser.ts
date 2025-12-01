@@ -8,18 +8,16 @@ export const parseExcelDate = (dateVal: any): Date | null => {
         if (dateVal instanceof Date) return dateVal;
 
         // Se for número (Excel Serial Date)
-        // Excel base date é 30/12/1899, mas JS conta milissegundos
         if (typeof dateVal === 'number') {
             return new Date(Math.round((dateVal - 25569) * 86400 * 1000));
         }
 
-        // Se for string (Tentativa de parse robusto)
+        // Se for string
         const strVal = String(dateVal).trim();
 
-        // Formato comum pt-BR DD/MM/AAAA ou DD-MM-AAAA
+        // Formato pt-BR DD/MM/AAAA ou DD-MM-AAAA
         if (strVal.match(/^\d{1,2}[/-]\d{1,2}[/-]\d{4}/)) {
             const parts = strVal.split(/[-/]/);
-            // Assumindo dia/mês/ano
             return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
         }
 
@@ -38,7 +36,6 @@ export const parseExcelDate = (dateVal: any): Date | null => {
     }
 };
 
-// NOVA FUNÇÃO: Formata Date para "DD/MM/AAAA"
 export const formatDateToBR = (date: Date | null): string => {
     if (!date || isNaN(date.getTime())) return "";
 
