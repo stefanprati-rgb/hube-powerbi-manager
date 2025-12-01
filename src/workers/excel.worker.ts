@@ -152,6 +152,7 @@ self.onmessage = async (e: MessageEvent) => {
                         else if (statusLower.includes('pago') || statusLower.includes('quitado')) status = 'Pago';
                         else if (statusLower.includes('atrasado') || statusLower.includes('atraso')) status = 'Atrasado';
                         else if (statusLower.includes('acordo') || statusLower.includes('negociado')) status = 'Negociado';
+                        else if (statusLower.includes('aprovado')) status = 'Atrasado'; // Aprovado = aguardando pagamento
                         else {
                             // <<< ADICIONADO: Log de status EGS não reconhecido
                             console.warn(`[FILTRO 3] Status EGS não reconhecido: "${status}"`);
