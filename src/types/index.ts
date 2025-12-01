@@ -37,25 +37,10 @@ export interface FileQueueItem {
     file: File;
     id: number;
     manualCode: string;
-    targetProject?: string;
+    targetProject?: string; // Define se estamos a filtrar por um projeto específico
     cutoffDate: string;
-
-    // --- NOVO: Identifica o papel do arquivo EGS ---
-    // 'base' = A planilha principal com dados cadastrais e status
-    // 'report' = O relatório complementar com os valores financeiros corretos
-    egsFileType?: 'base' | 'report';
-
     status: 'idle' | 'processing' | 'success' | 'error';
     errorMessage: string;
-}
-
-// Estrutura para o cruzamento de dados EGS
-export interface EGSFinancialMap {
-    [key: string]: {
-        custoComGD: number;
-        custoSemGD: number;
-        economia: number | string;
-    };
 }
 
 export interface ProcessResult {
@@ -74,10 +59,9 @@ export interface ProcessingProgress {
     total: number;
 }
 
-// Tipos de Mensagens do Worker
+// Tipos de Mensagens do Worker (Simplificado)
 export type WorkerMessage =
     | { action: 'analyze'; fileBuffer: ArrayBuffer }
-    | { action: 'extract_financials'; fileBuffer: ArrayBuffer }
     | {
         action: 'process';
         fileBuffer: ArrayBuffer;
@@ -85,5 +69,4 @@ export type WorkerMessage =
         manualCode: string;
         cutoffDate: string;
         targetProject?: string;
-        egsFinancials?: EGSFinancialMap
     };

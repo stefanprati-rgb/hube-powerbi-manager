@@ -17,13 +17,21 @@ export const FINAL_HEADERS: readonly string[] = [
 ] as const;
 
 export const EGS_MAPPING: Record<string, string> = {
-    "Região": "Região", // Adicionado conforme solicitado
+    "Região": "Região",
     "Instalação": "Instalação",
     "CNPJ": "CNPJ/CPF",
     "Distribuidora": "Distribuidora",
     "Razão Social": "Nome",
     "Referência": "Mês de Referência",
+
+    // Mapeamentos Financeiros (Base EGS)
     "Valor sem desconto": "Custo sem GD R$",
+    "Valor liberado": "Custo com GD R$",
+    "CUSTO_S_GD": "Custo sem GD R$",      // Nova coluna identificada
+    "CUSTO_S_GD ": "Custo sem GD R$",     // Variante com espaço (comum em exportações)
+    "CUSTO_C_GD": "Custo com GD R$",      // Nova coluna identificada
+    "CUSTO_C_GD ": "Custo com GD R$",     // Variante com espaço
+
     "Data emissão": "Data de Emissão",
     "Data Vencimento": "Vencimento",
     "Valor emitido": "Valor Final R$",
@@ -31,7 +39,10 @@ export const EGS_MAPPING: Record<string, string> = {
     "Valor Pago": "Valor Pago",
     "Multa/Juros": "Juros e Multa",
     "Data Pagamento": "Data de Pagamento",
-    "Credito kWh": "Créd. Consumido"
+
+    // Outros mapeamentos úteis identificados na planilha
+    "Créd. Consumido": "Crédito kWh",
+    "Credito kWh": "Crédito kWh"
 };
 
 // --- LISTA DE SIGLAS VÁLIDAS (FONTE DE VERDADE) ---

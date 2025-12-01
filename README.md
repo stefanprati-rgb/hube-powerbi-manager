@@ -1,18 +1,28 @@
 # 🔋 Hube Power BI Manager
 
 > **Processador inteligente de planilhas Excel para consolidação de dados de projetos de energia solar**
+> 
+> Aplicação web que automatiza normalização, filtragem e cálculos de múltiplos projetos em segundos. De **horas** para **segundos** ⚡
 
+[![Deploy Status](https://github.com/stefanprati-rgb/hube-powerbi-manager/actions/workflows/firebase-hosting-merge.yml/badge.svg)](https://github.com/stefanprati-rgb/hube-powerbi-manager/actions/workflows/firebase-hosting-merge.yml)
 [![Firebase](https://img.shields.io/badge/Firebase-Hosting-orange?logo=firebase)](https://firebase.google.com/)
 [![React](https://img.shields.io/badge/React-18.2-blue?logo=react)](https://reactjs.org/)
 [![TypeScript](https://img.shields.io/badge/TypeScript-5.9-blue?logo=typescript)](https://www.typescriptlang.org/)
 [![Vite](https://img.shields.io/badge/Vite-4.4-purple?logo=vite)](https://vitejs.dev/)
+[![License](https://img.shields.io/badge/License-Proprietary-red)](LICENSE)
+
+<!-- Descomente quando tiver URL de produção
+**🌐 [Demo ao Vivo](https://hube-powerbi-manager.web.app)** | **📖 [Documentação](docs/ARCHITECTURE.md)** | **🤝 [Contribuir](CONTRIBUTING.md)**
+-->
 
 ---
 
 ## 📋 Índice
 
+- [Status do Projeto](#-status-do-projeto)
 - [O Problema](#-o-problema)
 - [A Solução](#-a-solução)
+- [Arquitetura](#-arquitetura)
 - [Screenshots](#-screenshots)
 - [Funcionalidades](#-funcionalidades)
 - [Como Rodar](#-como-rodar)
@@ -23,6 +33,24 @@
   - [Planilhas de Entrada](#2-planilhas-de-entrada)
 - [Estrutura do Projeto](#-estrutura-do-projeto)
 - [Tecnologias](#-tecnologias)
+- [Roadmap](#-roadmap)
+- [Contribuindo](#-contribuindo)
+
+---
+
+## 📊 Status do Projeto
+
+**Status**: ✅ **Ativo** - Em desenvolvimento e uso em produção
+
+| Aspecto | Status |
+|---------|--------|
+| **Desenvolvimento** | 🟢 Ativo |
+| **Produção** | 🟢 Estável |
+| **Manutenção** | 🟢 Regular |
+| **Versão Atual** | v15.1 |
+| **Última Atualização** | Dezembro 2025 |
+
+**Próximas Features**: Ver [Roadmap](#-roadmap)
 
 ---
 
@@ -50,6 +78,45 @@ O **Hube Power BI Manager** é uma aplicação web moderna que:
 ✅ **Lembra configurações** via Firebase (memória coletiva na nuvem)
 
 **Resultado**: De **horas** para **segundos** ⚡
+
+---
+
+## 🏗️ Arquitetura
+
+O **Hube Power BI Manager** é uma **aplicação web frontend** (SPA) que processa planilhas Excel **localmente no navegador**, sem necessidade de backend para processamento de dados.
+
+```mermaid
+graph TB
+    subgraph "Cliente (Navegador)"
+        UI[Interface React]
+        Worker[Web Worker]
+    end
+    
+    subgraph "Firebase (Cloud)"
+        Firestore[(Firestore Database)]
+        Hosting[Firebase Hosting]
+    end
+    
+    User[Usuário] -->|Upload Excel| UI
+    UI -->|Processa em background| Worker
+    Worker -->|Retorna dados| UI
+    UI <-->|Salva/Carrega configurações| Firestore
+    Hosting -->|Serve aplicação| User
+    
+    style UI fill:#61DAFB
+    style Worker fill:#FFA500
+    style Firestore fill:#FFCA28
+    style Hosting fill:#FFCA28
+```
+
+### Características Principais
+
+- **Frontend-only**: Processamento 100% local (dados não saem do navegador)
+- **Web Workers**: Processamento paralelo sem travar a UI
+- **Firebase**: Apenas para configurações compartilhadas (datas de corte)
+- **Sem servidor**: Hospedado estaticamente no Firebase Hosting
+
+**📖 [Documentação Técnica Completa](docs/ARCHITECTURE.md)**
 
 ---
 
@@ -364,15 +431,52 @@ hube-powerbi-manager/
 
 ---
 
+## 🗺️ Roadmap
+
+### 🚀 Curto Prazo (Q1 2025)
+
+- [ ] Adicionar testes unitários (Vitest)
+- [ ] Implementar error boundaries
+- [ ] Melhorar tratamento de erros e feedback ao usuário
+- [ ] Adicionar loading skeletons
+- [ ] Suporte a mais formatos de data
+
+### 🎯 Médio Prazo (Q2 2025)
+
+- [ ] Suporte a mais formatos de arquivo (ODS, Google Sheets)
+- [ ] Exportação para outros formatos (CSV, JSON)
+- [ ] Histórico de processamentos (salvar na nuvem)
+- [ ] Comparação entre versões de planilhas
+- [ ] Dashboards de visualização de dados
+
+### 🔮 Longo Prazo (2025+)
+
+- [ ] Autenticação Firebase (login de usuários)
+- [ ] Modo colaborativo (múltiplos usuários editando)
+- [ ] API REST para integração com Power BI
+- [ ] Agendamento de processamentos automáticos
+- [ ] Notificações de alertas e riscos
+
+**💡 Tem uma sugestão?** Abra uma [issue](https://github.com/stefanprati-rgb/hube-powerbi-manager/issues) com a tag `enhancement`!
+
+---
+
 ## 🤝 Contribuindo
 
-Contribuições são bem-vindas! Para mudanças importantes:
+Contribuições são bem-vindas! Para contribuir:
 
-1. Fork o projeto
-2. Crie uma branch (`git checkout -b feature/MinhaFeature`)
-3. Commit suas mudanças (`git commit -m 'Add: MinhaFeature'`)
-4. Push para a branch (`git push origin feature/MinhaFeature`)
-5. Abra um Pull Request
+1. **Fork** o projeto
+2. Crie uma **branch** para sua feature (`git checkout -b feature/MinhaFeature`)
+3. **Commit** suas mudanças (`git commit -m 'feat: Add MinhaFeature'`)
+4. **Push** para a branch (`git push origin feature/MinhaFeature`)
+5. Abra um **Pull Request**
+
+**📖 Leia o [Guia de Contribuição](CONTRIBUTING.md)** para mais detalhes sobre:
+
+- Padrões de código
+- Processo de Pull Request
+- Como reportar bugs
+- Como sugerir features
 
 ---
 
