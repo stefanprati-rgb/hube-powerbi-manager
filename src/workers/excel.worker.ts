@@ -77,9 +77,17 @@ self.onmessage = async (e: MessageEvent) => {
             const currentProjCode = targetProject || (manualCode ? normalizeProject(manualCode, {}) : null);
             const isEGSContext = currentProjCode === 'EGS';
 
+            // <<< ADICIONADO: Log de contexto geral
+            console.log(`[DEBUG] Processando: ${fileName}, Projeto: ${currentProjCode}`);
+            console.log(`[DEBUG] Abas: ${workbook.SheetNames.join(', ')}`);
+
             workbook.SheetNames.forEach(sheetName => {
-                // Filtro de Aba EGS
-                if (isEGSContext && !sheetName.toLowerCase().includes('faturamento')) return;
+                // <<< ADICIONADO: Filtro de aba com log
+                if (isEGSContext && !sheetName.toLowerCase().includes('faturamento')) {
+                    console.warn(`[FILTRO 1] Aba "${sheetName}" ignorada (EGS requer 'faturamento')`);
+                    return;
+                }
+                console.log(`[DEBUG] Processando aba: ${sheetName}`);
 
                 const sheet = workbook.Sheets[sheetName];
                 const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
@@ -144,7 +152,11 @@ self.onmessage = async (e: MessageEvent) => {
                         else if (statusLower.includes('pago') || statusLower.includes('quitado')) status = 'Pago';
                         else if (statusLower.includes('atrasado') || statusLower.includes('atraso')) status = 'Atrasado';
                         else if (statusLower.includes('acordo') || statusLower.includes('negociado')) status = 'Negociado';
-                        else return;
+                        else {
+                            // <<< ADICIONADO: Log de status EGS não reconhecido
+                            console.warn(`[FILTRO 3] Status EGS não reconhecido: "${status}"`);
+                            return;
+                        }
                     } else {
                         if (statusLower.includes("cancelad")) return;
                     }
@@ -235,6 +247,9 @@ self.onmessage = async (e: MessageEvent) => {
                     processedRows.push(newRow);
                 });
             });
+
+            // <<< ADICIONADO: Log final de contagem
+            console.log(`[DEBUG] Total de linhas processadas: ${processedRows.length}`);
 
             self.postMessage({ success: true, rows: processedRows });
         }
