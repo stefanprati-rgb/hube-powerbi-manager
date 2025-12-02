@@ -103,16 +103,13 @@ self.onmessage = async (e: MessageEvent) => {
                     }
                 }
                 if (headerRowIndex === -1) return;
+
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
                 sheetData.forEach(row => {
-                    // Tenta ler a coluna Projeto, mas se não existir, passa vazio para normalizeProject tentar inferir
                     const rawProj = row["Projeto"] || row["PROJETO"];
                     const norm = normalizeProject(rawProj, row);
-
-                    if (norm) {
-                        detectedProjects.add(norm);
-                    }
+                    if (norm) detectedProjects.add(norm);
                 });
             });
 
@@ -133,7 +130,6 @@ self.onmessage = async (e: MessageEvent) => {
                 skippedStatus: 0
             };
 
-            // Pré-cálculo do código manual
             const manualCodeNormalized = manualCode ? normalizeProject(manualCode, {}) : null;
             const currentProjCode = targetProject || manualCodeNormalized;
             const isEGSContext = currentProjCode === 'EGS';
@@ -162,7 +158,6 @@ self.onmessage = async (e: MessageEvent) => {
 
                 if (headerRowIndex === -1) return;
 
-                // Verificação de coluna PROJETO (relaxada se tivermos código manual ou inferência possível)
                 const headerRow = rawData[headerRowIndex].map(c => String(c).toUpperCase().trim());
                 const hasProjectCol = headerRow.includes('PROJETO') || headerRow.includes('PROJETO');
 
@@ -171,22 +166,34 @@ self.onmessage = async (e: MessageEvent) => {
                 sheetData.forEach(row => {
                     stats.total++;
 
-                    // Define o projeto bruto
                     let rawProj = "";
                     if (hasProjectCol) {
                         rawProj = row["Projeto"] || row["PROJETO"];
                     }
-
-                    // Se não achou na coluna, usa manualCode como fallback inicial
                     if (!rawProj && manualCode) rawProj = manualCode;
 
-                    // Normaliza (aqui ocorre a mágica de separar EMG/ESP baseada na linha)
                     const finalProj = normalizeProject(rawProj, row);
 
-                    // Filtro de projeto alvo
                     if (!finalProj || (targetProject && finalProj !== targetProject)) {
                         stats.skippedEmpty++;
                         return;
+                    }
+
+                    // --- NOVOS FILTROS EGS ---
+                    if (finalProj === 'EGS') {
+                        // 1. Filtro: Status Faturamento = "aprovado"
+                        const statusFat = String(findValueInRow(row, "Status Faturamento") || "").toLowerCase().trim();
+                        if (statusFat !== 'aprovado') {
+                            stats.skippedStatus++; // Contamos como pulado por status
+                            return;
+                        }
+
+                        // 2. Filtro: Status Pagamento != "não faturado" e != "cancelado"
+                        const statusPag = String(findValueInRow(row, "Status Pagamento") || "").toLowerCase().trim();
+                        if (statusPag === 'não faturado' || statusPag.includes('cancelado')) {
+                            stats.skippedCancelled++;
+                            return;
+                        }
                     }
 
                     const normalizedRow: any = { ...row };
@@ -235,6 +242,16 @@ self.onmessage = async (e: MessageEvent) => {
                     });
 
                     newRow["Status"] = finalStatus;
+
+                    // 3. Regra: Forçar Cancelada = "Não" para EGS
+                    if (finalProj === 'EGS') {
+                        newRow["Cancelada"] = "Não";
+                    }
+
+                    // 4. Regra: Limpar Multa/Juros se for "-"
+                    if (finalProj === 'EGS' && String(newRow["Juros e Multa"]).trim() === '-') {
+                        newRow["Juros e Multa"] = "";
+                    }
 
                     // Valida Data de Emissão
                     const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
