@@ -19,7 +19,7 @@ export const determineRisk = (status: any, daysLate: number): string => {
     // ATUALIZADO: Risco baseado APENAS em dias de atraso
     // Status não influencia mais o risco
 
-    if (daysLate === 0) return "Nenhum";
+    if (daysLate === 0) return ""; // Alterado: Retorna vazio ao invés de "Nenhum"
     if (daysLate <= 30) return "Baixo";
     if (daysLate <= 90) return "Médio";
     return "Alto";
