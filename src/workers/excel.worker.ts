@@ -23,10 +23,16 @@ const normalizeProject = (raw: any, row: any): string | null => {
 
     // 1. AUTO-DETECÇÃO: Se não tiver coluna PROJETO, tenta inferir pelo contexto
     if (!p) {
-        // Verifica se é planilha padrão Era Verde (Tipo Contrato = tarifa-eraverde)
+        // A) Era Verde: Verifica Tipo Contrato = tarifa-eraverde
         const tipoContrato = String(findValueInRow(row, "Tipo Contrato") || "").toLowerCase();
         if (tipoContrato.includes("eraverde")) {
             p = "EVD"; // Gatilho interno para Era Verde
+        }
+
+        // B) EGS: Verifica existência de colunas exclusivas do modelo EGS
+        // Se encontrar "CUSTO_S_GD" (coluna técnica específica) ou "Obs Planilha Rubia"
+        if (findValueInRow(row, "CUSTO_S_GD") !== undefined || findValueInRow(row, "Obs Planilha Rubia") !== undefined) {
+            p = "EGS";
         }
     }
 
@@ -139,6 +145,7 @@ self.onmessage = async (e: MessageEvent) => {
             workbook.SheetNames.forEach(sheetName => {
                 if (isEGSContext) {
                     const lowerName = sheetName.toLowerCase();
+                    // Permite aba Faturamento ou Financeiro
                     if (!lowerName.includes('faturamento') && !lowerName.includes('financeiro')) return;
                 }
 
