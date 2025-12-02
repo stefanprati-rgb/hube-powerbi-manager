@@ -26,9 +26,17 @@ const formatNumberToBR = (value: number | string | null | undefined): string => 
 const mapStatusStrict = (statusRaw: string): string | null => {
     const s = statusRaw.toLowerCase().trim();
     if (!s) return null;
+
+    // 1. Negociados
     if (s.includes('quitado parc') || s.includes('negociado') || s.includes('acordo')) return 'Negociado';
+
+    // 2. Pagos
     if (s.includes('pago') || s.includes('quitado')) return 'Pago';
-    if (s.includes('atrasado') || s.includes('atraso')) return 'Atrasado';
+
+    // 3. Atrasados / Em Aberto
+    // ATUALIZADO: Inclui 'expirado', 'em aberto' e 'pendente' para cobrir Matrix (MTX) e outros
+    if (s.includes('atrasado') || s.includes('atraso') || s.includes('expirado') || s.includes('em aberto') || s.includes('pendente')) return 'Atrasado';
+
     return null;
 };
 
@@ -40,7 +48,7 @@ export class StandardStrategy implements IProjectStrategy {
         const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO") || manualCode;
         const p = String(rawProj || "").trim().toUpperCase();
 
-        // Mapeia (ex: "LN" -> "LNV")
+        // Mapeia (ex: "LN" -> "LNV", "MX" -> "MTX")
         const mapped = PROJECT_MAPPING[p] || p;
 
         // Verifica se é um dos códigos padrão suportados
@@ -53,7 +61,7 @@ export class StandardStrategy implements IProjectStrategy {
         const p = String(rawProj || "").trim().toUpperCase();
         const finalProj = PROJECT_MAPPING[p] || p;
 
-        // 2. Mapeamento de Colunas (EGS_MAPPING é o mapa geral de colunas)
+        // 2. Mapeamento de Colunas
         const normalizedRow: any = { ...row };
         Object.entries(EGS_MAPPING).forEach(([orig, dest]) => {
             const val = findValueInRow(row, orig);
@@ -107,7 +115,7 @@ export class StandardStrategy implements IProjectStrategy {
         const dataVencimento = parseExcelDate(newRow["Vencimento"]);
         if (dataVencimento) newRow["Vencimento"] = formatDateToBR(dataVencimento);
 
-        // Desconto Padrão (0 para Standard)
+        // Desconto Padrão
         newRow["Desconto contrato (%)"] = formatNumberToBR(0);
 
         // Cálculos Financeiros
