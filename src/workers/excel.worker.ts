@@ -47,7 +47,6 @@ const normalizeProject = (raw: any, row: any): string | null => {
     let mapped = PROJECT_MAPPING[p] || p;
 
     // 2. Regra Específica: Era Verde (EVD, EMG, ESP)
-    // ATENÇÃO: Agora incluímos EMG e ESP na verificação para corrigir seleções manuais erradas
     if (mapped === 'EVD' || mapped === 'EMG' || mapped === 'ESP' || p.startsWith('ERA VERDE')) {
         const distRaw = String(findValueInRow(row, "Distribuidora") || "").toLowerCase().trim();
 
@@ -116,7 +115,8 @@ self.onmessage = async (e: MessageEvent) => {
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
                 sheetData.forEach(row => {
-                    const rawProj = row["Projeto"] || row["PROJETO"];
+                    // FIX: Usa findValueInRow para garantir leitura robusta da coluna Projeto
+                    const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO");
                     const norm = normalizeProject(rawProj, row);
                     if (norm) detectedProjects.add(norm);
                 });
@@ -167,7 +167,8 @@ self.onmessage = async (e: MessageEvent) => {
                 if (headerRowIndex === -1) return;
 
                 const headerRow = rawData[headerRowIndex].map(c => String(c).toUpperCase().trim());
-                const hasProjectCol = headerRow.includes('PROJETO') || headerRow.includes('PROJETO');
+                // Verifica duplicidade ou variações comuns
+                const hasProjectCol = headerRow.includes('PROJETO') || headerRow.includes('PROJETO ');
 
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
@@ -176,8 +177,11 @@ self.onmessage = async (e: MessageEvent) => {
 
                     let rawProj = "";
                     if (hasProjectCol) {
-                        rawProj = row["Projeto"] || row["PROJETO"];
+                        // FIX: Usa findValueInRow para leitura robusta (resolve o bug de "PROJETO " com espaço)
+                        rawProj = findValueInRow(row, "Projeto");
                     }
+
+                    // Só usa o manualCode se realmente não encontrou nada na linha
                     if (!rawProj && manualCode) rawProj = manualCode;
 
                     // Normaliza e corrige EMG/ESP baseado na distribuidora da linha
