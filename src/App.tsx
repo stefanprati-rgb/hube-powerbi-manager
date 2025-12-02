@@ -5,6 +5,7 @@ import { doc, getDoc, setDoc } from 'firebase/firestore';
 import { db } from './config/firebase';
 import Icon from './components/Icon';
 import FileItem from './components/FileItem';
+import ProcessingIndicator from './components/ProcessingIndicator';
 import { FINAL_HEADERS, VALID_PROJECT_CODES } from './config/constants';
 import type { FileQueueItem, ProcessingProgress, ProcessedRow } from './types';
 import ExcelWorker from './workers/excel.worker?worker';
@@ -23,6 +24,7 @@ function App() {
     const [isDragOver, setIsDragOver] = useState<boolean>(false);
     const [uploadStatus, setUploadStatus] = useState<string>('');
     const [processProgress, setProcessProgress] = useState<ProcessingProgress>({ current: 0, total: 0 });
+    const [currentFileName, setCurrentFileName] = useState<string>('');
     const [cloudCutoffs, setCloudCutoffs] = useState<Record<string, string>>(DEFAULT_CUTOFFS);
 
     // Carrega configurações da nuvem
@@ -161,6 +163,7 @@ function App() {
             if (item.status === 'success') { setProcessProgress(prev => ({ ...prev, current: i + 1 })); continue; }
 
             setProcessProgress(prev => ({ ...prev, current: i + 1 }));
+            setCurrentFileName(item.file.name);
             setFileQueue(prev => prev.map((it, idx) => idx === i ? { ...it, status: 'processing' } : it));
 
             try {
@@ -205,6 +208,7 @@ function App() {
         else setUploadStatus('Concluído com erros.');
 
         setProcessedData(allData);
+        setCurrentFileName('');
         setIsProcessing(false);
     };
 
@@ -223,6 +227,13 @@ function App() {
 
     return (
         <div className="min-h-screen pb-20 relative bg-[#F5F5F7]">
+            {isProcessing && (
+                <ProcessingIndicator
+                    current={processProgress.current}
+                    total={processProgress.total}
+                    fileName={currentFileName}
+                />
+            )}
             <header className="glass-header sticky top-0 z-40 px-6 py-4 flex justify-between items-center mb-8">
                 <div className="flex items-center gap-4">
                     <img src="https://hube.energy/wp-content/uploads/2024/10/Logo-1.svg" className="h-8 w-auto" alt="Hube Logo" onError={e => ((e.target as HTMLImageElement).style.display = 'none')} />
