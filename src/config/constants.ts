@@ -26,10 +26,8 @@ export const EGS_MAPPING: Record<string, string> = {
     "Referência": "Mês de Referência",
 
     // Mapeamentos Financeiros (Base EGS)
-    "Valor sem desconto": "Custo sem GD R$",
-    "Valor liberado": "Custo com GD R$",
     "CUSTO_S_GD": "Custo sem GD R$",
-    "CUSTO_S_GD ": "Custo sem GD R$",
+    "CUSTO_S_GD ": "Custo sem GD R$", // Caso venha com espaço
     "CUSTO_C_GD": "Custo com GD R$",
     "CUSTO_C_GD ": "Custo com GD R$",
 
@@ -37,12 +35,11 @@ export const EGS_MAPPING: Record<string, string> = {
     "Data Vencimento": "Vencimento",
     "Valor emitido": "Valor Final R$",
     "Status Pagamento": "Status",
-    "Status Faturamento": "Status",
+
     "Valor Pago": "Valor Pago",
     "Multa/Juros": "Juros e Multa",
     "Data Pagamento": "Data de Pagamento",
 
-    // Novos mapeamentos identificados
     "Créd. Consumido": "Crédito kWh",
     "Credito kWh": "Crédito kWh",
     "Telefone": "Telefone",
