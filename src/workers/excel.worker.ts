@@ -20,9 +20,7 @@ const findValueInRow = (rowObj: any, keyName: string) => {
 // Helper para formatar números com vírgula (Padrão BR)
 const formatNumberToBR = (value: number | string | null | undefined): string => {
     if (value === undefined || value === null || value === '') return "";
-    // Se já for string e tiver vírgula, assume que está certo
     if (typeof value === 'string' && value.includes(',')) return value;
-    // Converte para string e troca ponto por vírgula
     return String(value).replace('.', ',');
 };
 
@@ -30,11 +28,15 @@ const formatNumberToBR = (value: number | string | null | undefined): string => 
 const normalizeProject = (raw: any, row: any): string | null => {
     let p = String(raw || "").trim().toUpperCase();
 
+    // 1. AUTO-DETECÇÃO (para quando não há seleção manual ou coluna Projeto)
     if (!p) {
+        // A) Era Verde: Verifica Tipo Contrato
         const tipoContrato = String(findValueInRow(row, "Tipo Contrato") || "").toLowerCase();
         if (tipoContrato.includes("eraverde")) {
             p = "EVD";
         }
+
+        // B) EGS: Verifica colunas exclusivas
         if (findValueInRow(row, "CUSTO_S_GD") !== undefined || findValueInRow(row, "Obs Planilha Rubia") !== undefined) {
             p = "EGS";
         }
@@ -44,16 +46,21 @@ const normalizeProject = (raw: any, row: any): string | null => {
 
     let mapped = PROJECT_MAPPING[p] || p;
 
-    if (mapped === 'EVD' || p.startsWith('ERA VERDE')) {
+    // 2. Regra Específica: Era Verde (EVD, EMG, ESP)
+    // ATENÇÃO: Agora incluímos EMG e ESP na verificação para corrigir seleções manuais erradas
+    if (mapped === 'EVD' || mapped === 'EMG' || mapped === 'ESP' || p.startsWith('ERA VERDE')) {
         const distRaw = String(findValueInRow(row, "Distribuidora") || "").toLowerCase().trim();
+
+        // Lógica Soberana da Distribuidora
         if (distRaw.includes('cemig')) {
             mapped = 'EMG';
         } else if (distRaw.includes('cpfl') || distRaw.includes('paulista')) {
             mapped = 'ESP';
         } else {
+            // Fallback: Tenta definir pela UF se a distribuidora não for clara
             const uf = String(findValueInRow(row, "UF") || findValueInRow(row, "Estado") || "").trim().toUpperCase();
             if (uf === 'MG') mapped = 'EMG';
-            else mapped = 'ESP';
+            else mapped = 'ESP'; // Padrão SP se não for MG
         }
     }
 
@@ -66,7 +73,7 @@ const mapStatusStrict = (statusRaw: string): string | null => {
 
     if (!s) return null;
 
-    // 1. Acordos -> Alterado para "Negociado" conforme solicitado
+    // 1. Acordos
     if (s.includes('quitado parc') || s.includes('negociado') || s.includes('acordo')) {
         return 'Negociado';
     }
@@ -173,6 +180,7 @@ self.onmessage = async (e: MessageEvent) => {
                     }
                     if (!rawProj && manualCode) rawProj = manualCode;
 
+                    // Normaliza e corrige EMG/ESP baseado na distribuidora da linha
                     const finalProj = normalizeProject(rawProj, row);
 
                     if (!finalProj || (targetProject && finalProj !== targetProject)) {
@@ -253,15 +261,12 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    // --- FORMATAÇÕES ---
-
                     if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = formatNumberToBR(parseCurrency(normalizedRow["Crédito kWh"]));
                     if (normalizedRow["ID Boleto/Pix"]) newRow["ID Boleto/Pix"] = String(normalizedRow["ID Boleto/Pix"]).trim();
 
                     if (newRow["Instalação"]) newRow["Instalação"] = normalizeInstallation(newRow["Instalação"]);
                     if (newRow["Distribuidora"]) newRow["Distribuidora"] = normalizeDistributor(newRow["Distribuidora"]);
 
-                    // Formatação de Data para Mês de Referência
                     if (refDate) newRow["Mês de Referência"] = formatDateToBR(refDate);
                     if (dataEmissaoParsed) newRow["Data de Emissão"] = formatDateToBR(dataEmissaoParsed);
 
@@ -273,11 +278,9 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    // Descontos e Custos (aplicando formatação BR)
                     if (finalProj === 'EGS') newRow["Desconto contrato (%)"] = 0.25;
                     else if (!newRow["Desconto contrato (%)"]) newRow["Desconto contrato (%)"] = 0;
 
-                    // Converte o desconto para string com vírgula (ex: 0,25)
                     newRow["Desconto contrato (%)"] = formatNumberToBR(newRow["Desconto contrato (%)"]);
 
                     const cSem = parseCurrency(newRow["Custo sem GD R$"]);
@@ -295,7 +298,6 @@ self.onmessage = async (e: MessageEvent) => {
                         newRow["Economia R$"] = formatNumberToBR(calculateEconomySafe(cCom, cSem));
                     }
 
-                    // Outros campos monetários
                     if (newRow["Valor Bruto R$"]) newRow["Valor Bruto R$"] = formatNumberToBR(parseCurrency(newRow["Valor Bruto R$"]));
                     if (newRow["Tarifa aplicada R$"]) newRow["Tarifa aplicada R$"] = formatNumberToBR(parseCurrency(newRow["Tarifa aplicada R$"]));
                     if (newRow["Ajuste retroativo R$"]) newRow["Ajuste retroativo R$"] = formatNumberToBR(parseCurrency(newRow["Ajuste retroativo R$"]));
