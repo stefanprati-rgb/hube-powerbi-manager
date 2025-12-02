@@ -24,6 +24,7 @@ const normalizeProject = (raw: any, row: any): string | null => {
     return VALID_PROJECT_CODES.includes(mapped) ? mapped : null;
 };
 
+// Helper para encontrar valor na linha ignorando maiúsculas/minúsculas
 const findValueInRow = (rowObj: any, keyName: string) => {
     if (rowObj[keyName] !== undefined) return rowObj[keyName];
     const cleanKey = String(keyName).trim().toLowerCase();
@@ -31,36 +32,33 @@ const findValueInRow = (rowObj: any, keyName: string) => {
     return actualKey ? rowObj[actualKey] : undefined;
 };
 
-// Função auxiliar para mapear status conforme regras estritas
-const mapStatus = (statusRaw: string): string | null => {
+// --- NOVA LÓGICA DE STATUS (ESTRITA) ---
+const mapStatusStrict = (statusRaw: string): string | null => {
     const s = statusRaw.toLowerCase().trim();
 
-    if (!s) return null; // Vazio
+    if (!s) return null; // (Vazias) = (ignorar)
 
-    // Regras de Exclusão (Ignorar)
-    if (
-        s === 'pendente' ||
-        s === 'aprovado' ||
-        s.includes('não emitido') ||
-        s.includes('nao emitido') ||
-        s.includes('não faturado') ||
-        s.includes('nao faturado')
-    ) {
-        return null;
+    // Regras de Mapeamento (Ordem importa!)
+
+    // 1. Acordos
+    if (s.includes('quitado parc') || s.includes('negociado') || s.includes('acordo')) {
+        return 'Acordo';
     }
 
-    // Regras de Mapeamento (Prioridade para strings mais longas/específicas)
-    if (s.includes('quitado parc')) return 'Acordo';
-    if (s.includes('negociado')) return 'Acordo';
-    if (s.includes('acordo')) return 'Acordo';
+    // 2. Pagos
+    // Verifica 'quitado' depois de 'quitado parc' para não dar conflito
+    if (s.includes('pago') || s.includes('quitado')) {
+        return 'Pago';
+    }
 
-    if (s.includes('atrasado') || s.includes('atraso')) return 'Atrasado';
+    // 3. Atrasados
+    if (s.includes('atrasado') || s.includes('atraso')) {
+        return 'Atrasado';
+    }
 
-    if (s.includes('pago') || s.includes('quitado')) return 'Pago';
-
-    // Se não caiu em nenhuma regra acima, mas tem valor, retorna capitalizado (ou null se preferir ser super estrito)
-    // Para segurança, vamos assumir que se passou pelos filtros de exclusão, mantemos capitalizado.
-    return s.charAt(0).toUpperCase() + s.slice(1).toLowerCase();
+    // 4. Ignorar
+    // Pendente, Aprovado, Não Emitido, Cancelado, ou qualquer outro não listado acima retorna null
+    return null;
 };
 
 self.onmessage = async (e: MessageEvent) => {
@@ -99,6 +97,7 @@ self.onmessage = async (e: MessageEvent) => {
 
         if (action === 'process') {
             const processedRows: any[] = [];
+
             const stats = {
                 total: 0,
                 processed: 0,
@@ -116,6 +115,7 @@ self.onmessage = async (e: MessageEvent) => {
             workbook.SheetNames.forEach(sheetName => {
                 if (isEGSContext) {
                     const lowerName = sheetName.toLowerCase();
+                    // Permite aba Faturamento ou Financeiro
                     if (!lowerName.includes('faturamento') && !lowerName.includes('financeiro')) return;
                 }
 
@@ -164,23 +164,26 @@ self.onmessage = async (e: MessageEvent) => {
                         if (val !== undefined) normalizedRow[dest] = val;
                     });
 
-                    // --- TRATAMENTO DE STATUS ESTRITO ---
-                    const statusRaw = String(
-                        normalizedRow["Status"] ||
-                        normalizedRow["Status Faturamento"] ||
-                        normalizedRow["Status Pagamento"] ||
-                        ""
-                    );
+                    // --- LÓGICA DE STATUS ---
+                    let statusRaw = "";
 
-                    const finalStatus = mapStatus(statusRaw);
+                    if (finalProj === 'EGS') {
+                        // Para EGS, força leitura de "Status Pagamento"
+                        statusRaw = String(findValueInRow(row, "Status Pagamento") || "").trim();
+                    } else {
+                        // Para outros, tenta as colunas padrão
+                        statusRaw = String(
+                            normalizedRow["Status"] ||
+                            normalizedRow["Status Faturamento"] ||
+                            normalizedRow["Status Pagamento"] ||
+                            ""
+                        ).trim();
+                    }
+
+                    const finalStatus = mapStatusStrict(statusRaw);
 
                     if (!finalStatus) {
                         stats.skippedStatus++;
-                        return; // Ignora Pendente, Aprovado, Vazios, Não Emitido
-                    }
-
-                    if (finalStatus.toLowerCase().includes("cancelad")) {
-                        stats.skippedCancelled++;
                         return;
                     }
 
@@ -204,6 +207,7 @@ self.onmessage = async (e: MessageEvent) => {
 
                     newRow["Status"] = finalStatus;
 
+                    // Valida Data de Emissão
                     const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
                     const dataEmissaoParsed = parseExcelDate(dataEmissaoRaw);
 
@@ -252,7 +256,7 @@ self.onmessage = async (e: MessageEvent) => {
                     }
 
                     let dias = 0;
-                    const statusPago = finalStatus === 'Pago'; // Agora normalizado
+                    const statusPago = finalStatus === 'Pago';
 
                     if (!statusPago) {
                         dias = newRow["Dias Atrasados"] ? Number(newRow["Dias Atrasados"]) : calculateDaysLate(dataVencimento);
