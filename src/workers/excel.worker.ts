@@ -9,7 +9,7 @@ import { FINAL_HEADERS, EGS_MAPPING, PROJECT_MAPPING, VALID_PROJECT_CODES } from
 const REQUIRED_ID_COLUMN = ['instalação', 'instalacao'];
 const FINANCIAL_TERMS = ['valor', 'custo', 'tarifa', 'total', 'referência', 'vencimento'];
 
-// Helper para encontrar valor na linha ignorando maiúsculas/minúsculas (Uso geral)
+// Helper para encontrar valor na linha ignorando maiúsculas/minúsculas
 const findValueInRow = (rowObj: any, keyName: string) => {
     if (rowObj[keyName] !== undefined) return rowObj[keyName];
     const cleanKey = String(keyName).trim().toLowerCase();
@@ -17,20 +17,24 @@ const findValueInRow = (rowObj: any, keyName: string) => {
     return actualKey ? rowObj[actualKey] : undefined;
 };
 
-// Normalização estrita de projeto com regra de Distribuidora para Era Verde
+// Helper para formatar números com vírgula (Padrão BR)
+const formatNumberToBR = (value: number | string | null | undefined): string => {
+    if (value === undefined || value === null || value === '') return "";
+    // Se já for string e tiver vírgula, assume que está certo
+    if (typeof value === 'string' && value.includes(',')) return value;
+    // Converte para string e troca ponto por vírgula
+    return String(value).replace('.', ',');
+};
+
+// Normalização estrita de projeto
 const normalizeProject = (raw: any, row: any): string | null => {
     let p = String(raw || "").trim().toUpperCase();
 
-    // 1. AUTO-DETECÇÃO: Se não tiver coluna PROJETO, tenta inferir pelo contexto
     if (!p) {
-        // A) Era Verde: Verifica Tipo Contrato = tarifa-eraverde
         const tipoContrato = String(findValueInRow(row, "Tipo Contrato") || "").toLowerCase();
         if (tipoContrato.includes("eraverde")) {
-            p = "EVD"; // Gatilho interno para Era Verde
+            p = "EVD";
         }
-
-        // B) EGS: Verifica existência de colunas exclusivas do modelo EGS
-        // Se encontrar "CUSTO_S_GD" (coluna técnica específica) ou "Obs Planilha Rubia"
         if (findValueInRow(row, "CUSTO_S_GD") !== undefined || findValueInRow(row, "Obs Planilha Rubia") !== undefined) {
             p = "EGS";
         }
@@ -40,21 +44,16 @@ const normalizeProject = (raw: any, row: any): string | null => {
 
     let mapped = PROJECT_MAPPING[p] || p;
 
-    // 2. Regra Específica: Era Verde (EVD) -> EMG ou ESP
     if (mapped === 'EVD' || p.startsWith('ERA VERDE')) {
-        // Busca o valor da distribuidora usando a função auxiliar
         const distRaw = String(findValueInRow(row, "Distribuidora") || "").toLowerCase().trim();
-
-        // Verifica os valores específicos indicados: "cemig" ou "cpfl_paulista"
         if (distRaw.includes('cemig')) {
             mapped = 'EMG';
         } else if (distRaw.includes('cpfl') || distRaw.includes('paulista')) {
             mapped = 'ESP';
         } else {
-            // Fallback: Tenta definir pela UF se a distribuidora não for clara
             const uf = String(findValueInRow(row, "UF") || findValueInRow(row, "Estado") || "").trim().toUpperCase();
             if (uf === 'MG') mapped = 'EMG';
-            else mapped = 'ESP'; // Padrão SP se não for MG
+            else mapped = 'ESP';
         }
     }
 
@@ -65,13 +64,11 @@ const normalizeProject = (raw: any, row: any): string | null => {
 const mapStatusStrict = (statusRaw: string): string | null => {
     const s = statusRaw.toLowerCase().trim();
 
-    if (!s) return null; // (Vazias) = (ignorar)
+    if (!s) return null;
 
-    // Regras de Mapeamento (Ordem importa!)
-
-    // 1. Acordos
+    // 1. Acordos -> Alterado para "Negociado" conforme solicitado
     if (s.includes('quitado parc') || s.includes('negociado') || s.includes('acordo')) {
-        return 'Acordo';
+        return 'Negociado';
     }
 
     // 2. Pagos
@@ -84,7 +81,6 @@ const mapStatusStrict = (statusRaw: string): string | null => {
         return 'Atrasado';
     }
 
-    // 4. Ignorar
     return null;
 };
 
@@ -119,7 +115,6 @@ self.onmessage = async (e: MessageEvent) => {
                 });
             });
 
-            console.log(`[WORKER] Projetos detectados:`, Array.from(detectedProjects));
             self.postMessage({ success: true, projects: Array.from(detectedProjects) });
             return;
         }
@@ -145,7 +140,6 @@ self.onmessage = async (e: MessageEvent) => {
             workbook.SheetNames.forEach(sheetName => {
                 if (isEGSContext) {
                     const lowerName = sheetName.toLowerCase();
-                    // Permite aba Faturamento ou Financeiro
                     if (!lowerName.includes('faturamento') && !lowerName.includes('financeiro')) return;
                 }
 
@@ -186,16 +180,13 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    // --- NOVOS FILTROS EGS ---
                     if (finalProj === 'EGS') {
-                        // 1. Filtro: Status Faturamento = "aprovado"
                         const statusFat = String(findValueInRow(row, "Status Faturamento") || "").toLowerCase().trim();
                         if (statusFat !== 'aprovado') {
-                            stats.skippedStatus++; // Contamos como pulado por status
+                            stats.skippedStatus++;
                             return;
                         }
 
-                        // 2. Filtro: Status Pagamento != "não faturado" e != "cancelado"
                         const statusPag = String(findValueInRow(row, "Status Pagamento") || "").toLowerCase().trim();
                         if (statusPag === 'não faturado' || statusPag.includes('cancelado')) {
                             stats.skippedCancelled++;
@@ -209,9 +200,7 @@ self.onmessage = async (e: MessageEvent) => {
                         if (val !== undefined) normalizedRow[dest] = val;
                     });
 
-                    // --- LÓGICA DE STATUS ---
                     let statusRaw = "";
-
                     if (finalProj === 'EGS') {
                         statusRaw = String(findValueInRow(row, "Status Pagamento") || "").trim();
                     } else {
@@ -230,7 +219,6 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    // --- Verificação de Data (Corte) ---
                     const refDate = parseExcelDate(normalizedRow["Mês de Referência"] || normalizedRow["Referência"]);
                     const skipCheck = shouldSkipRow(refDate, cutoffDate, finalStatus);
 
@@ -240,7 +228,6 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    // --- Construção da Linha ---
                     const newRow: Record<string, any> = {};
                     newRow["PROJETO"] = finalProj;
 
@@ -250,17 +237,14 @@ self.onmessage = async (e: MessageEvent) => {
 
                     newRow["Status"] = finalStatus;
 
-                    // 3. Regra: Forçar Cancelada = "Não" para EGS
                     if (finalProj === 'EGS') {
                         newRow["Cancelada"] = "Não";
                     }
 
-                    // 4. Regra: Limpar Multa/Juros se for "-"
                     if (finalProj === 'EGS' && String(newRow["Juros e Multa"]).trim() === '-') {
                         newRow["Juros e Multa"] = "";
                     }
 
-                    // Valida Data de Emissão
                     const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
                     const dataEmissaoParsed = parseExcelDate(dataEmissaoRaw);
 
@@ -269,12 +253,15 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = parseCurrency(normalizedRow["Crédito kWh"]);
+                    // --- FORMATAÇÕES ---
+
+                    if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = formatNumberToBR(parseCurrency(normalizedRow["Crédito kWh"]));
                     if (normalizedRow["ID Boleto/Pix"]) newRow["ID Boleto/Pix"] = String(normalizedRow["ID Boleto/Pix"]).trim();
 
                     if (newRow["Instalação"]) newRow["Instalação"] = normalizeInstallation(newRow["Instalação"]);
                     if (newRow["Distribuidora"]) newRow["Distribuidora"] = normalizeDistributor(newRow["Distribuidora"]);
 
+                    // Formatação de Data para Mês de Referência
                     if (refDate) newRow["Mês de Referência"] = formatDateToBR(refDate);
                     if (dataEmissaoParsed) newRow["Data de Emissão"] = formatDateToBR(dataEmissaoParsed);
 
@@ -286,23 +273,36 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
+                    // Descontos e Custos (aplicando formatação BR)
                     if (finalProj === 'EGS') newRow["Desconto contrato (%)"] = 0.25;
                     else if (!newRow["Desconto contrato (%)"]) newRow["Desconto contrato (%)"] = 0;
+
+                    // Converte o desconto para string com vírgula (ex: 0,25)
+                    newRow["Desconto contrato (%)"] = formatNumberToBR(newRow["Desconto contrato (%)"]);
 
                     const cSem = parseCurrency(newRow["Custo sem GD R$"]);
                     const cCom = parseCurrency(newRow["Custo com GD R$"]);
 
-                    newRow["Custo sem GD R$"] = cSem;
-                    newRow["Custo com GD R$"] = cCom;
+                    newRow["Custo sem GD R$"] = formatNumberToBR(cSem);
+                    newRow["Custo com GD R$"] = formatNumberToBR(cCom);
 
-                    if (newRow["Valor Final R$"]) newRow["Valor Final R$"] = parseCurrency(newRow["Valor Final R$"]);
+                    if (newRow["Valor Final R$"]) newRow["Valor Final R$"] = formatNumberToBR(parseCurrency(newRow["Valor Final R$"]));
 
                     let ecoVal = newRow["Economia R$"];
                     if (ecoVal && String(ecoVal).trim() !== "") {
-                        newRow["Economia R$"] = parseCurrency(ecoVal);
+                        newRow["Economia R$"] = formatNumberToBR(parseCurrency(ecoVal));
                     } else {
-                        newRow["Economia R$"] = calculateEconomySafe(cCom, cSem);
+                        newRow["Economia R$"] = formatNumberToBR(calculateEconomySafe(cCom, cSem));
                     }
+
+                    // Outros campos monetários
+                    if (newRow["Valor Bruto R$"]) newRow["Valor Bruto R$"] = formatNumberToBR(parseCurrency(newRow["Valor Bruto R$"]));
+                    if (newRow["Tarifa aplicada R$"]) newRow["Tarifa aplicada R$"] = formatNumberToBR(parseCurrency(newRow["Tarifa aplicada R$"]));
+                    if (newRow["Ajuste retroativo R$"]) newRow["Ajuste retroativo R$"] = formatNumberToBR(parseCurrency(newRow["Ajuste retroativo R$"]));
+                    if (newRow["Desconto extra"]) newRow["Desconto extra"] = formatNumberToBR(parseCurrency(newRow["Desconto extra"]));
+                    if (newRow["Valor da cobrança R$"]) newRow["Valor da cobrança R$"] = formatNumberToBR(parseCurrency(newRow["Valor da cobrança R$"]));
+                    if (newRow["Valor Pago"]) newRow["Valor Pago"] = formatNumberToBR(parseCurrency(newRow["Valor Pago"]));
+                    if (newRow["Valor creditado R$"]) newRow["Valor creditado R$"] = formatNumberToBR(parseCurrency(newRow["Valor creditado R$"]));
 
                     let dias = 0;
                     const statusPago = finalStatus === 'Pago';
