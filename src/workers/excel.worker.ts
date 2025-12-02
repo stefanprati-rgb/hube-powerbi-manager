@@ -139,22 +139,25 @@ self.onmessage = async (e: MessageEvent) => {
                     ).trim();
                     const statusLower = status.toLowerCase();
 
-                    // FILTRO: Ignora faturas não emitidas/não faturadas
-                    if (statusLower.includes('não emitido') ||
+                    // FILTRO: Ignora faturas não emitidas/não faturadas/pendentes/aprovadas/vazias
+                    if (!status || status.trim() === "" ||
+                        statusLower.includes('não emitido') ||
                         statusLower.includes('nao emitido') ||
                         statusLower.includes('não faturado') ||
-                        statusLower.includes('nao faturado')) {
+                        statusLower.includes('nao faturado') ||
+                        statusLower.includes('pendente') ||
+                        statusLower.includes('aprovado')) {
+                        console.warn(`[FILTRO 2] Status ignorado: "${status}"`);
                         return;
                     }
 
                     if (finalProj === 'EGS') {
-                        if (statusLower.includes('quitado parc')) status = 'Negociado';
+                        // Mapeamento EGS: Quitado Parc. → Acordo, Negociado → Acordo
+                        if (statusLower.includes('quitado parc')) status = 'Acordo';
                         else if (statusLower.includes('pago') || statusLower.includes('quitado')) status = 'Pago';
                         else if (statusLower.includes('atrasado') || statusLower.includes('atraso')) status = 'Atrasado';
-                        else if (statusLower.includes('acordo') || statusLower.includes('negociado')) status = 'Negociado';
-                        else if (statusLower.includes('aprovado')) status = 'Atrasado'; // Aprovado = aguardando pagamento
+                        else if (statusLower.includes('acordo') || statusLower.includes('negociado')) status = 'Acordo';
                         else {
-                            // <<< ADICIONADO: Log de status EGS não reconhecido
                             console.warn(`[FILTRO 3] Status EGS não reconhecido: "${status}"`);
                             return;
                         }
