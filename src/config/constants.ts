@@ -2,7 +2,7 @@
 
 export const FINAL_HEADERS: readonly string[] = [
     "PROJETO",
-    "Instalação", "Nome", "CNPJ/CPF", "Telefone", "E-mail", "Distribuidora",
+    "Instalação", "Nome", "CNPJ/CPF", "Distribuidora",
     "Cep", "Endereço", "Cidade", "UF",
     "Tipo de Pagamento", "Tipo Contrato", "Desconto contrato (%)", "Condição Comercial",
     "Data de Vencimento", "Mês de Referência", "Base para cálculo", "Tipo Cobrança",
@@ -13,8 +13,7 @@ export const FINAL_HEADERS: readonly string[] = [
     "Dias de Atraso", "Juros e Multa", "Valor da cobrança R$", "Valor Pago",
     "Valor creditado R$", "ID Boleto/Pix", "Instituição bancária", "Conta vinculada",
     "Status", "Cancelada", "Data de Cancelamento", "Motivo do Cancelamento",
-    "Cancelamento", "Dias Atrasados", "Risco",
-    "Região", "Arquivo Origem"
+    "Cancelamento", "Dias Atrasados", "Risco"
 ] as const;
 
 export const EGS_MAPPING: Record<string, string> = {
@@ -27,7 +26,7 @@ export const EGS_MAPPING: Record<string, string> = {
 
     // Mapeamentos Financeiros (Base EGS)
     "CUSTO_S_GD": "Custo sem GD R$",
-    "CUSTO_S_GD ": "Custo sem GD R$", // Caso venha com espaço
+    "CUSTO_S_GD ": "Custo sem GD R$",
     "CUSTO_C_GD": "Custo com GD R$",
     "CUSTO_C_GD ": "Custo com GD R$",
 
@@ -48,10 +47,8 @@ export const EGS_MAPPING: Record<string, string> = {
     "COD BOLETO": "ID Boleto/Pix"
 };
 
-// --- LISTA DE SIGLAS VÁLIDAS (FONTE DE VERDADE) ---
 export const VALID_PROJECT_CODES = ['LNV', 'ALA', 'EGS', 'MTX', 'EMG', 'ESP'];
 
-// --- MAPEAMENTO DE NOMES PARA SIGLAS ---
 export const PROJECT_MAPPING: Record<string, string> = {
     // Lua Nova
     'LN': 'LNV', 'LNV': 'LNV', 'LUA NOVA': 'LNV', 'LUA NOVA ENERGIA': 'LNV',
@@ -64,6 +61,6 @@ export const PROJECT_MAPPING: Record<string, string> = {
     // Era Verde (Mapeamentos diretos)
     'EMG': 'EMG', 'ERA VERDE ENERGIA - MG': 'EMG',
     'ESP': 'ESP', 'ERA VERDE ENERGIA - SP': 'ESP',
-    // Era Verde (Genéricos para resolução via UF)
+    // Era Verde (Genéricos para resolução via Distribuidora/UF)
     'EVD': 'EVD', 'ERA VERDE': 'EVD'
 };

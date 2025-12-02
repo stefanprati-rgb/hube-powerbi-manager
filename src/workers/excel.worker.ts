@@ -9,22 +9,7 @@ import { FINAL_HEADERS, EGS_MAPPING, PROJECT_MAPPING, VALID_PROJECT_CODES } from
 const REQUIRED_ID_COLUMN = ['instalação', 'instalacao'];
 const FINANCIAL_TERMS = ['valor', 'custo', 'tarifa', 'total', 'referência', 'vencimento'];
 
-// Normalização estrita de projeto
-const normalizeProject = (raw: any, row: any): string | null => {
-    let p = String(raw || "").trim().toUpperCase();
-    if (!p) return null;
-
-    let mapped = PROJECT_MAPPING[p] || p;
-
-    if (mapped === 'EVD' || p.startsWith('ERA VERDE')) {
-        const uf = String(row["UF"] || row["Estado"] || "").trim().toUpperCase();
-        mapped = uf === 'MG' ? 'EMG' : 'ESP';
-    }
-
-    return VALID_PROJECT_CODES.includes(mapped) ? mapped : null;
-};
-
-// Helper para encontrar valor na linha ignorando maiúsculas/minúsculas
+// Helper para encontrar valor na linha ignorando maiúsculas/minúsculas (Uso geral)
 const findValueInRow = (rowObj: any, keyName: string) => {
     if (rowObj[keyName] !== undefined) return rowObj[keyName];
     const cleanKey = String(keyName).trim().toLowerCase();
@@ -32,7 +17,45 @@ const findValueInRow = (rowObj: any, keyName: string) => {
     return actualKey ? rowObj[actualKey] : undefined;
 };
 
-// --- NOVA LÓGICA DE STATUS (ESTRITA) ---
+// Normalização estrita de projeto com regra de Distribuidora para Era Verde
+const normalizeProject = (raw: any, row: any): string | null => {
+    let p = String(raw || "").trim().toUpperCase();
+
+    // 1. AUTO-DETECÇÃO: Se não tiver coluna PROJETO, tenta inferir pelo contexto
+    if (!p) {
+        // Verifica se é planilha padrão Era Verde (Tipo Contrato = tarifa-eraverde)
+        const tipoContrato = String(findValueInRow(row, "Tipo Contrato") || "").toLowerCase();
+        if (tipoContrato.includes("eraverde")) {
+            p = "EVD"; // Gatilho interno para Era Verde
+        }
+    }
+
+    if (!p) return null;
+
+    let mapped = PROJECT_MAPPING[p] || p;
+
+    // 2. Regra Específica: Era Verde (EVD) -> EMG ou ESP
+    if (mapped === 'EVD' || p.startsWith('ERA VERDE')) {
+        // Busca o valor da distribuidora usando a função auxiliar
+        const distRaw = String(findValueInRow(row, "Distribuidora") || "").toLowerCase().trim();
+
+        // Verifica os valores específicos indicados: "cemig" ou "cpfl_paulista"
+        if (distRaw.includes('cemig')) {
+            mapped = 'EMG';
+        } else if (distRaw.includes('cpfl') || distRaw.includes('paulista')) {
+            mapped = 'ESP';
+        } else {
+            // Fallback: Tenta definir pela UF se a distribuidora não for clara
+            const uf = String(findValueInRow(row, "UF") || findValueInRow(row, "Estado") || "").trim().toUpperCase();
+            if (uf === 'MG') mapped = 'EMG';
+            else mapped = 'ESP'; // Padrão SP se não for MG
+        }
+    }
+
+    return VALID_PROJECT_CODES.includes(mapped) ? mapped : null;
+};
+
+// --- LÓGICA DE STATUS (ESTRITA) ---
 const mapStatusStrict = (statusRaw: string): string | null => {
     const s = statusRaw.toLowerCase().trim();
 
@@ -46,7 +69,6 @@ const mapStatusStrict = (statusRaw: string): string | null => {
     }
 
     // 2. Pagos
-    // Verifica 'quitado' depois de 'quitado parc' para não dar conflito
     if (s.includes('pago') || s.includes('quitado')) {
         return 'Pago';
     }
@@ -57,7 +79,6 @@ const mapStatusStrict = (statusRaw: string): string | null => {
     }
 
     // 4. Ignorar
-    // Pendente, Aprovado, Não Emitido, Cancelado, ou qualquer outro não listado acima retorna null
     return null;
 };
 
@@ -83,14 +104,19 @@ self.onmessage = async (e: MessageEvent) => {
                 }
                 if (headerRowIndex === -1) return;
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
+
                 sheetData.forEach(row => {
+                    // Tenta ler a coluna Projeto, mas se não existir, passa vazio para normalizeProject tentar inferir
                     const rawProj = row["Projeto"] || row["PROJETO"];
-                    if (rawProj) {
-                        const norm = normalizeProject(rawProj, row);
-                        if (norm) detectedProjects.add(norm);
+                    const norm = normalizeProject(rawProj, row);
+
+                    if (norm) {
+                        detectedProjects.add(norm);
                     }
                 });
             });
+
+            console.log(`[WORKER] Projetos detectados:`, Array.from(detectedProjects));
             self.postMessage({ success: true, projects: Array.from(detectedProjects) });
             return;
         }
@@ -107,15 +133,16 @@ self.onmessage = async (e: MessageEvent) => {
                 skippedStatus: 0
             };
 
-            const currentProjCode = targetProject || (manualCode ? normalizeProject(manualCode, {}) : null);
+            // Pré-cálculo do código manual
+            const manualCodeNormalized = manualCode ? normalizeProject(manualCode, {}) : null;
+            const currentProjCode = targetProject || manualCodeNormalized;
             const isEGSContext = currentProjCode === 'EGS';
 
-            console.log(`[WORKER] Iniciando: ${fileName} (${currentProjCode || 'N/A'})`);
+            console.log(`[WORKER] Iniciando processamento: ${fileName} (Alvo: ${currentProjCode || 'N/A'})`);
 
             workbook.SheetNames.forEach(sheetName => {
                 if (isEGSContext) {
                     const lowerName = sheetName.toLowerCase();
-                    // Permite aba Faturamento ou Financeiro
                     if (!lowerName.includes('faturamento') && !lowerName.includes('financeiro')) return;
                 }
 
@@ -135,24 +162,28 @@ self.onmessage = async (e: MessageEvent) => {
 
                 if (headerRowIndex === -1) return;
 
+                // Verificação de coluna PROJETO (relaxada se tivermos código manual ou inferência possível)
                 const headerRow = rawData[headerRowIndex].map(c => String(c).toUpperCase().trim());
-                const hasProjectCol = headerRow.includes('PROJETO');
-
-                if (!hasProjectCol && (!manualCode || manualCode.trim() === "")) {
-                    throw new Error("Coluna PROJETO ausente e sigla manual não informada.");
-                }
+                const hasProjectCol = headerRow.includes('PROJETO') || headerRow.includes('PROJETO');
 
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
                 sheetData.forEach(row => {
                     stats.total++;
 
+                    // Define o projeto bruto
                     let rawProj = "";
-                    if (hasProjectCol) rawProj = row["Projeto"] || row["PROJETO"];
-                    if (!rawProj) rawProj = manualCode;
+                    if (hasProjectCol) {
+                        rawProj = row["Projeto"] || row["PROJETO"];
+                    }
 
+                    // Se não achou na coluna, usa manualCode como fallback inicial
+                    if (!rawProj && manualCode) rawProj = manualCode;
+
+                    // Normaliza (aqui ocorre a mágica de separar EMG/ESP baseada na linha)
                     const finalProj = normalizeProject(rawProj, row);
 
+                    // Filtro de projeto alvo
                     if (!finalProj || (targetProject && finalProj !== targetProject)) {
                         stats.skippedEmpty++;
                         return;
@@ -168,10 +199,8 @@ self.onmessage = async (e: MessageEvent) => {
                     let statusRaw = "";
 
                     if (finalProj === 'EGS') {
-                        // Para EGS, força leitura de "Status Pagamento"
                         statusRaw = String(findValueInRow(row, "Status Pagamento") || "").trim();
                     } else {
-                        // Para outros, tenta as colunas padrão
                         statusRaw = String(
                             normalizedRow["Status"] ||
                             normalizedRow["Status Faturamento"] ||
@@ -216,10 +245,6 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    if (normalizedRow["Telefone"]) newRow["Telefone"] = String(normalizedRow["Telefone"]).trim();
-                    if (normalizedRow["E-mail"] || normalizedRow["E-MAIL DO PAGADOR"]) {
-                        newRow["E-mail"] = String(normalizedRow["E-mail"] || normalizedRow["E-MAIL DO PAGADOR"]).trim();
-                    }
                     if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = parseCurrency(normalizedRow["Crédito kWh"]);
                     if (normalizedRow["ID Boleto/Pix"]) newRow["ID Boleto/Pix"] = String(normalizedRow["ID Boleto/Pix"]).trim();
 
@@ -267,8 +292,6 @@ self.onmessage = async (e: MessageEvent) => {
                     if (!newRow["Risco"]) {
                         newRow["Risco"] = determineRisk(null, newRow["Dias Atrasados"]);
                     }
-
-                    newRow["Arquivo Origem"] = `${fileName} [${sheetName}]`;
 
                     processedRows.push(newRow);
                     stats.processed++;
