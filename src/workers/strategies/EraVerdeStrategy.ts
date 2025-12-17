@@ -6,7 +6,7 @@ import { calculateDaysLate, determineRisk, shouldSkipRow } from '../../modules/b
 import { normalizeInstallation, normalizeDistributor } from '../../modules/stringNormalizer';
 import { FINAL_HEADERS, EGS_MAPPING, PROJECT_MAPPING } from '../../config/constants';
 
-// Helpers Utilitários (Locais)
+// Helpers
 const findValueInRow = (rowObj: any, keyName: string) => {
     if (rowObj[keyName] !== undefined) return rowObj[keyName];
     const cleanKey = String(keyName).trim().toLowerCase();
@@ -14,49 +14,36 @@ const findValueInRow = (rowObj: any, keyName: string) => {
     return actualKey ? rowObj[actualKey] : undefined;
 };
 
-const formatNumberToBR = (value: number | string | null | undefined): string => {
-    if (value === undefined || value === null || value === '') return "";
-    if (typeof value === 'string' && value.includes(',')) return value;
-    return String(value).replace('.', ',');
-};
-
-const mapStatusStrict = (statusRaw: string): string | null => {
+// Relaxando status para evitar linhas faltantes
+const mapStatusStrict = (statusRaw: string): string => {
     const s = statusRaw.toLowerCase().trim();
-    if (!s) return null;
+    if (!s) return 'Aberto';
     if (s.includes('quitado parc') || s.includes('negociado') || s.includes('acordo')) return 'Negociado';
     if (s.includes('pago') || s.includes('quitado')) return 'Pago';
     if (s.includes('atrasado') || s.includes('atraso')) return 'Atrasado';
-    return null;
+    return 'Aberto';
 };
 
 export class EraVerdeStrategy implements IProjectStrategy {
     name = 'ERA VERDE (EMG/ESP)';
 
     matches(row: any, manualCode?: string): boolean {
-        // 1. Verifica Seleção Manual ou Coluna Projeto
         const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO") || manualCode;
         const p = String(rawProj || "").trim().toUpperCase();
-
         const mapped = PROJECT_MAPPING[p] || p;
 
         if (['EVD', 'EMG', 'ESP'].includes(mapped) || p.startsWith('ERA VERDE')) {
             return true;
         }
-
-        // 2. Auto-detecção por Tipo de Contrato (se não houver indicação explicita)
         const tipoContrato = String(findValueInRow(row, "Tipo Contrato") || "").toLowerCase();
         if (tipoContrato.includes("eraverde")) {
             return true;
         }
-
         return false;
     }
 
     process(row: any, context: ProcessingContext): any | null {
-        // --- RESOLUÇÃO DE SUB-PROJETO (EMG vs ESP) ---
-        let finalProj = 'ESP'; // Valor padrão seguro
-
-        // 1. Tenta identificar pela Distribuidora (Mais preciso)
+        let finalProj = 'ESP';
         const distRaw = String(findValueInRow(row, "Distribuidora") || "").toLowerCase().trim();
 
         if (distRaw.includes('cemig')) {
@@ -64,35 +51,24 @@ export class EraVerdeStrategy implements IProjectStrategy {
         } else if (distRaw.includes('cpfl') || distRaw.includes('paulista')) {
             finalProj = 'ESP';
         } else {
-            // 2. Fallback: Tenta identificar pela UF
             const uf = String(findValueInRow(row, "UF") || findValueInRow(row, "Estado") || "").trim().toUpperCase();
             if (uf === 'MG') {
                 finalProj = 'EMG';
             } else {
-                finalProj = 'ESP'; // Se não for MG, assume SP (ESP)
+                finalProj = 'ESP';
             }
         }
 
-        // Filtro de Projeto Alvo (Caso o usuário tenha filtrado especificamente "Era Verde MG" na UI)
-        // Se o contexto tiver um manualCode específico (EMG ou ESP), verificamos se bate.
-        // Se o manualCode for genérico (EVD), aceitamos ambos.
         if (context.manualCode) {
-            const target = PROJECT_MAPPING[context.manualCode] || context.manualCode;
-            if ((target === 'EMG' || target === 'ESP') && target !== finalProj) {
-                // Se o usuário selecionou EXPLICITAMENTE um subprojeto e detectamos outro, 
-                // tecnicamente poderíamos pular. Mas a regra atual é "corrigir" a seleção.
-                // Mantemos o finalProj calculado como verdadeiro.
-            }
+            // Lógica de filtro por projeto alvo removida - mantemos detecção automática
         }
 
-        // --- MAPEAMENTO DE DADOS ---
         const normalizedRow: any = { ...row };
         Object.entries(EGS_MAPPING).forEach(([orig, dest]) => {
             const val = findValueInRow(row, orig);
             if (val !== undefined) normalizedRow[dest] = val;
         });
 
-        // --- STATUS ---
         const statusRaw = String(
             normalizedRow["Status"] ||
             normalizedRow["Status Faturamento"] ||
@@ -101,16 +77,13 @@ export class EraVerdeStrategy implements IProjectStrategy {
         ).trim();
 
         const finalStatus = mapStatusStrict(statusRaw);
-        if (!finalStatus) return null;
 
-        // --- DATA DE CORTE ---
         const refDate = parseExcelDate(normalizedRow["Mês de Referência"] || normalizedRow["Referência"]);
         const skipCheck = shouldSkipRow(refDate, context.cutoffDate, finalStatus);
         if (skipCheck.shouldSkip) return null;
 
-        // --- CONSTRUÇÃO DO OBJETO ---
         const newRow: Record<string, any> = {};
-        newRow["PROJETO"] = finalProj; // Aqui entra o código correto (EMG ou ESP)
+        newRow["PROJETO"] = finalProj;
 
         FINAL_HEADERS.forEach(key => {
             if (key !== "PROJETO") newRow[key] = normalizedRow[key] !== undefined ? normalizedRow[key] : "";
@@ -118,15 +91,14 @@ export class EraVerdeStrategy implements IProjectStrategy {
 
         newRow["Status"] = finalStatus;
 
-        // --- VALIDAÇÕES E FORMATAÇÕES ---
         const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
         const dataEmissaoParsed = parseExcelDate(dataEmissaoRaw);
 
         if (!dataEmissaoParsed || isNaN(dataEmissaoParsed.getTime())) return null;
         if (!newRow["Instalação"] && !newRow["CNPJ/CPF"]) return null;
 
-        // Formatação Monetária
-        if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = formatNumberToBR(parseCurrency(normalizedRow["Crédito kWh"]));
+        // --- FORMATAÇÃO NUMÉRICA (FLOAT) ---
+        if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = parseCurrency(normalizedRow["Crédito kWh"]);
         if (normalizedRow["ID Boleto/Pix"]) newRow["ID Boleto/Pix"] = String(normalizedRow["ID Boleto/Pix"]).trim();
 
         if (newRow["Instalação"]) newRow["Instalação"] = normalizeInstallation(newRow["Instalação"]);
@@ -138,33 +110,32 @@ export class EraVerdeStrategy implements IProjectStrategy {
         const dataVencimento = parseExcelDate(newRow["Vencimento"]);
         if (dataVencimento) newRow["Vencimento"] = formatDateToBR(dataVencimento);
 
-        // Desconto Padrão (Era Verde não tem regra fixa de 0.25 como EGS, então segue o arquivo ou 0)
         if (!newRow["Desconto contrato (%)"]) newRow["Desconto contrato (%)"] = 0;
-        newRow["Desconto contrato (%)"] = formatNumberToBR(newRow["Desconto contrato (%)"]);
+        // Garantindo que seja number, se vier string '0,2' parseCurrency resolve ou parseFloat
+        if (typeof newRow["Desconto contrato (%)"] === 'string') {
+            newRow["Desconto contrato (%)"] = parseCurrency(newRow["Desconto contrato (%)"]);
+        }
 
-        // Cálculos Financeiros
         const cSem = parseCurrency(newRow["Custo sem GD R$"]);
         const cCom = parseCurrency(newRow["Custo com GD R$"]);
 
-        newRow["Custo sem GD R$"] = formatNumberToBR(cSem);
-        newRow["Custo com GD R$"] = formatNumberToBR(cCom);
+        newRow["Custo sem GD R$"] = cSem;
+        newRow["Custo com GD R$"] = cCom;
 
-        if (newRow["Valor Final R$"]) newRow["Valor Final R$"] = formatNumberToBR(parseCurrency(newRow["Valor Final R$"]));
+        if (newRow["Valor Final R$"]) newRow["Valor Final R$"] = parseCurrency(newRow["Valor Final R$"]);
 
         let ecoVal = newRow["Economia R$"];
         if (ecoVal && String(ecoVal).trim() !== "") {
-            newRow["Economia R$"] = formatNumberToBR(parseCurrency(ecoVal));
+            newRow["Economia R$"] = parseCurrency(ecoVal);
         } else {
-            newRow["Economia R$"] = formatNumberToBR(calculateEconomySafe(cCom, cSem));
+            newRow["Economia R$"] = parseFloat(calculateEconomySafe(cCom, cSem));
         }
 
-        // Outros campos
         ['Valor Bruto R$', 'Tarifa aplicada R$', 'Ajuste retroativo R$', 'Desconto extra',
             'Valor da cobrança R$', 'Valor Pago', 'Valor creditado R$'].forEach(field => {
-                if (newRow[field]) newRow[field] = formatNumberToBR(parseCurrency(newRow[field]));
+                if (newRow[field]) newRow[field] = parseCurrency(newRow[field]);
             });
 
-        // Risco e Atraso
         let dias = 0;
         const statusPago = finalStatus === 'Pago';
 
