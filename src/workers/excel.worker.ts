@@ -9,18 +9,7 @@ import { IProjectStrategy, ProcessingContext } from './strategies/IProjectStrate
 const REQUIRED_ID_COLUMN = ['instalação', 'instalacao'];
 const FINANCIAL_TERMS = ['valor', 'custo', 'tarifa', 'total', 'referência', 'vencimento'];
 
-// Helper básico apenas para encontrar o cabeçalho no arquivo bruto
-const findValueInRow = (rowObj: any, keyName: string) => {
-    if (rowObj[keyName] !== undefined) return rowObj[keyName];
-    const cleanKey = String(keyName).trim().toLowerCase();
-    const actualKey = Object.keys(rowObj).find(k => String(k).trim().toLowerCase() === cleanKey);
-    return actualKey ? rowObj[actualKey] : undefined;
-};
-
 // Instancia as estratégias na ordem de prioridade
-// 1. EGS (Regras muito específicas de colunas)
-// 2. Era Verde (Regras específicas de distribuidora)
-// 3. Standard (Padrão para o resto)
 const getStrategies = (): IProjectStrategy[] => [
     new EGSStrategy(),
     new EraVerdeStrategy(),
@@ -54,19 +43,15 @@ self.onmessage = async (e: MessageEvent) => {
                 }
                 if (headerRowIndex === -1) return;
 
-                // 2. Ler amostra de dados
+                // 2. Ler amostra de dados (Aumentado para 50 linhas para melhor detecção)
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
-                // Analisa as primeiras 20 linhas para descobrir o projeto
-                sheetData.slice(0, 20).forEach(row => {
+                sheetData.slice(0, 50).forEach(row => {
                     for (const strategy of strategies) {
                         if (strategy.matches(row, manualCode)) {
-                            // Executa processamento "fake" para saber qual PROJETO a estratégia define
-                            // (Ex: EraVerdeStrategy pode retornar EMG ou ESP dependendo da linha)
                             const result = strategy.process(row, { manualCode, fileName });
                             if (result && result.PROJETO) {
                                 detectedProjects.add(result.PROJETO);
-                                // Se achou uma estratégia que processa, não precisa testar as outras para esta linha
                                 break;
                             }
                         }
@@ -90,7 +75,7 @@ self.onmessage = async (e: MessageEvent) => {
                 skippedStatus: 0
             };
 
-            console.log(`[WORKER] Iniciando processamento modular: ${fileName}`);
+            console.log(`[WORKER] Iniciando processamento: ${fileName}`);
 
             const context: ProcessingContext = {
                 manualCode,
@@ -109,9 +94,7 @@ self.onmessage = async (e: MessageEvent) => {
                     if (!row || row.length === 0) continue;
                     const rowStr = row.map(c => String(c).toLowerCase());
                     if (rowStr.some(cell => REQUIRED_ID_COLUMN.some(k => cell.includes(k)))) {
-                        // Verifica termos financeiros para evitar abas de cadastro (exceto EGS que é especial)
                         const matches = rowStr.filter(cell => FINANCIAL_TERMS.some(term => cell.includes(term))).length;
-                        // Relaxamos a regra para 1 match se parecer muito com cabeçalho
                         if (matches >= 1) { headerRowIndex = i; break; }
                     }
                 }
@@ -128,7 +111,7 @@ self.onmessage = async (e: MessageEvent) => {
                     const strategy = strategies.find(s => s.matches(row, manualCode));
 
                     if (!strategy) {
-                        stats.skippedEmpty++; // Nenhuma estratégia aceitou a linha
+                        stats.skippedEmpty++;
                         return;
                     }
 
@@ -136,24 +119,20 @@ self.onmessage = async (e: MessageEvent) => {
                     const result = strategy.process(row, context);
 
                     if (!result) {
-                        // Se retornou null, foi filtrado (status, data, etc). 
-                        // Simplificação: contamos como skippedStatus ou genericamente
                         stats.skippedStatus++;
                         return;
                     }
 
-                    // C) Filtro de Projeto Alvo (Caso estejamos processando apenas um dos projetos detectados)
-                    if (targetProject && result.PROJETO !== targetProject) {
-                        stats.skippedEmpty++;
-                        return;
-                    }
+                    // C) ALTERAÇÃO CRÍTICA: Removido o filtro rígido de targetProject.
+                    // Se a estratégia validou e retornou um projeto, nós aceitamos.
+                    // Isso permite arquivos mistos (LNV+MTX ou EMG+ESP) sem perder dados.
 
                     processedRows.push(result);
                     stats.processed++;
                 });
             });
 
-            console.log(`[WORKER] Relatório Final (${fileName}):`, stats);
+            console.log(`[WORKER] Concluído (${fileName}):`, stats);
             self.postMessage({ success: true, rows: processedRows, stats });
         }
 

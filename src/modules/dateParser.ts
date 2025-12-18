@@ -1,47 +1,48 @@
 // src/modules/dateParser.ts
 
 export const parseExcelDate = (dateVal: any): Date | null => {
-    try {
-        if (!dateVal) return null;
+    if (!dateVal) return null;
 
-        // Se já for objeto Date
-        if (dateVal instanceof Date) return dateVal;
+    // 1. Se já for objeto Date
+    if (dateVal instanceof Date) return isNaN(dateVal.getTime()) ? null : dateVal;
 
-        // Se for número (Excel Serial Date)
-        if (typeof dateVal === 'number') {
-            return new Date(Math.round((dateVal - 25569) * 86400 * 1000));
-        }
-
-        // Se for string
-        const strVal = String(dateVal).trim();
-
-        // Formato pt-BR DD/MM/AAAA ou DD-MM-AAAA
-        if (strVal.match(/^\d{1,2}[/-]\d{1,2}[/-]\d{4}/)) {
-            const parts = strVal.split(/[-/]/);
-            return new Date(Number(parts[2]), Number(parts[1]) - 1, Number(parts[0]));
-        }
-
-        // Formato ISO YYYY-MM-DD
-        if (strVal.includes('-') && strVal.split('-')[0].length === 4) {
-            const parts = strVal.split('-');
-            return new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]));
-        }
-
-        const parsed = new Date(dateVal);
-        return isNaN(parsed.getTime()) ? null : parsed;
-
-    } catch (e) {
-        console.warn("Falha ao processar data:", dateVal);
-        return null;
+    // 2. Se for número (Serial do Excel)
+    if (typeof dateVal === 'number') {
+        // Excel base date: December 30, 1899
+        // Ajuste básico para UTC para evitar problemas de fuso horário (-3h) ao converter
+        const utc_days = Math.floor(dateVal - 25569);
+        const utc_value = utc_days * 86400;
+        return new Date(utc_value * 1000);
     }
+
+    // 3. Se for String
+    const s = String(dateVal).trim();
+
+    // Suporte para ISO YYYY-MM-DD (Comum em exportações de banco/sistemas novos)
+    if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
+        // Ex: 2025-11-17
+        const [y, m, d] = s.split('-').map(Number);
+        return new Date(y, m - 1, d);
+    }
+
+    // Suporte para DD/MM/YYYY ou DD-MM-YYYY (Padrão BR)
+    if (s.match(/^\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}/)) {
+        const parts = s.split(/[\/\-]/);
+        const d = parseInt(parts[0], 10);
+        const m = parseInt(parts[1], 10) - 1;
+        const y = parseInt(parts[2], 10);
+        // Ajuste para ano com 2 dígitos
+        const fullYear = y < 100 ? y + 2000 : y;
+        return new Date(fullYear, m, d);
+    }
+
+    return null;
 };
 
-export const formatDateToBR = (date: Date | null): string => {
+export const formatDateToBR = (date: Date): string => {
     if (!date || isNaN(date.getTime())) return "";
-
-    const day = String(date.getDate()).padStart(2, '0');
-    const month = String(date.getMonth() + 1).padStart(2, '0');
-    const year = date.getFullYear();
-
-    return `${day}/${month}/${year}`;
+    const d = String(date.getUTCDate()).padStart(2, '0');
+    const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+    const y = date.getUTCFullYear();
+    return `${d}-${m}-${y}`;
 };
