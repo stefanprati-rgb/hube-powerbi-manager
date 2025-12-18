@@ -52,7 +52,8 @@ self.onmessage = async (e: MessageEvent) => {
                             // Processamento "dry-run" sem cutoffDate para não filtrar
                             const result = strategy.process(row, { manualCode: undefined, fileName });
 
-                            if (result && result.PROJETO) {
+                            // Ignora resultados _skipped durante análise
+                            if (result && !result._skipped && result.PROJETO) {
                                 const proj = result.PROJETO;
                                 projectCounts[proj] = (projectCounts[proj] || 0) + 1;
                                 break;
@@ -74,13 +75,14 @@ self.onmessage = async (e: MessageEvent) => {
             const stats = {
                 total: 0,
                 processed: 0,
-                skippedOld: 0,
-                skippedCancelled: 0,
-                skippedEmpty: 0,
-                skippedStatus: 0
+                skippedOld: 0,      // Linhas antigas (data < cutoff)
+                skippedCancelled: 0, // Linhas canceladas/baixadas
+                skippedEmpty: 0,    // Sem estratégia (estrutura não reconhecida)
+                skippedStatus: 0,   // Erro de validação (data inválida, sem instalação)
+                skippedValidation: 0 // Novo: validações específicas
             };
 
-            console.log(`[WORKER] Iniciando processamento: ${fileName} | ManualCode: ${manualCode}`);
+            console.log(`[WORKER] Iniciando processamento: ${fileName} | Código: ${manualCode} | Corte: ${cutoffDate}`);
 
             const context: ProcessingContext = {
                 manualCode,
@@ -119,8 +121,20 @@ self.onmessage = async (e: MessageEvent) => {
 
                     const result = strategy.process(row, context);
 
+                    // ALTERAÇÃO: Tratamento detalhado do retorno 'Skipped'
                     if (!result) {
-                        stats.skippedStatus++;
+                        stats.skippedStatus++; // Retorno null clássico
+                        return;
+                    }
+
+                    if (result._skipped) {
+                        if (result.reason === 'cutoff') {
+                            stats.skippedOld++; // Conta como "Antigo/Data de Corte"
+                        } else if (result.reason === 'validation') {
+                            stats.skippedValidation++; // Erro de validação (data inválida, etc)
+                        } else {
+                            stats.skippedStatus++; // Outros motivos
+                        }
                         return;
                     }
 
@@ -134,7 +148,18 @@ self.onmessage = async (e: MessageEvent) => {
                 });
             });
 
-            console.log(`[WORKER] Concluído (${fileName}):`, stats);
+            // Log detalhado para debug
+            console.log(`[WORKER] ═══════════════════════════════════════════════`);
+            console.log(`[WORKER] 📊 RELATÓRIO FINAL: ${fileName}`);
+            console.log(`[WORKER] ───────────────────────────────────────────────`);
+            console.log(`[WORKER] 📋 Total de linhas:      ${stats.total.toLocaleString()}`);
+            console.log(`[WORKER] ✅ Processadas:          ${stats.processed.toLocaleString()}`);
+            console.log(`[WORKER] 📅 Antigas (< corte):    ${stats.skippedOld.toLocaleString()}`);
+            console.log(`[WORKER] ⚠️  Validação inválida:  ${stats.skippedValidation.toLocaleString()}`);
+            console.log(`[WORKER] ❌ Estrutura inválida:   ${stats.skippedEmpty.toLocaleString()}`);
+            console.log(`[WORKER] 🚫 Status/Outros:        ${stats.skippedStatus.toLocaleString()}`);
+            console.log(`[WORKER] ═══════════════════════════════════════════════`);
+
             self.postMessage({ success: true, rows: processedRows, stats });
         }
 

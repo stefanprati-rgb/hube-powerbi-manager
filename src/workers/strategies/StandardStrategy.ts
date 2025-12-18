@@ -6,10 +6,8 @@ import { calculateDaysLate, determineRisk, shouldSkipRow } from '../../modules/b
 import { normalizeInstallation, normalizeDistributor } from '../../modules/stringNormalizer';
 import { FINAL_HEADERS, EGS_MAPPING, PROJECT_MAPPING } from '../../config/constants';
 
-// Projetos que esta estratégia aceita
 const STANDARD_CODES = ['LNV', 'ALA', 'MTX'];
 
-// Helpers Utilitários (Locais para a Estratégia)
 const findValueInRow = (rowObj: any, keyName: string) => {
     if (rowObj[keyName] !== undefined) return rowObj[keyName];
     const cleanKey = String(keyName).trim().toLowerCase();
@@ -20,11 +18,9 @@ const findValueInRow = (rowObj: any, keyName: string) => {
 const mapStatusStrict = (statusRaw: string): string => {
     const s = statusRaw.toLowerCase().trim();
     if (!s) return 'Aberto';
-
     if (s.includes('quitado parc') || s.includes('negociado') || s.includes('acordo')) return 'Negociado';
     if (s.includes('pago') || s.includes('quitado') || s.includes('liquidado') || s.includes('baixado')) return 'Pago';
     if (s.includes('atrasado') || s.includes('atraso') || s.includes('expirado') || s.includes('pendente')) return 'Atrasado';
-
     return 'Aberto';
 };
 
@@ -32,10 +28,10 @@ export class StandardStrategy implements IProjectStrategy {
     name = 'STANDARD (LNV/ALA/MTX)';
 
     matches(row: any, manualCode?: string): boolean {
-        // 1. Tenta pelo código manual
+        // 1. Manual
         if (manualCode && STANDARD_CODES.includes(manualCode)) return true;
 
-        // 2. Tenta pela coluna PROJETO
+        // 2. Coluna Projeto
         const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO");
         if (rawProj) {
             const p = String(rawProj).trim().toUpperCase();
@@ -43,17 +39,13 @@ export class StandardStrategy implements IProjectStrategy {
             if (STANDARD_CODES.includes(mapped)) return true;
         }
 
-        // 3. (NOVO) Detecção Genérica por Estrutura
-        // Se não tem coluna projeto, mas tem cara de planilha padrão (Instalação + Valor Final ou Valor Consolidado)
-        // Isso permite contar as linhas na análise antes do usuário selecionar o projeto.
+        // 3. Genérico (para contagem na Análise)
         const temInstalacao = findValueInRow(row, "Instalação") !== undefined;
         const temValor = findValueInRow(row, "Valor Final R$") !== undefined ||
             findValueInRow(row, "Valor Consolidado") !== undefined ||
             findValueInRow(row, "Total calculado R$") !== undefined;
 
-        if (temInstalacao && temValor) {
-            return true;
-        }
+        if (temInstalacao && temValor) return true;
 
         return false;
     }
@@ -61,19 +53,13 @@ export class StandardStrategy implements IProjectStrategy {
     process(row: any, context: ProcessingContext): any | null {
         // 1. Identificação do Projeto
         let finalProj = '';
-
-        // Tenta pegar do manual
         if (context.manualCode && STANDARD_CODES.includes(context.manualCode)) {
             finalProj = context.manualCode;
         } else {
-            // Tenta pegar da coluna
             const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO");
             const p = String(rawProj || "").trim().toUpperCase();
             finalProj = PROJECT_MAPPING[p] || p;
         }
-
-        // Se após tudo isso não tiver projeto (caso da análise genérica), retorna um placeholder
-        // O Worker vai usar isso para contar as linhas como "A Definir"
         if (!finalProj || !STANDARD_CODES.includes(finalProj)) {
             finalProj = 'A Definir';
         }
@@ -85,62 +71,55 @@ export class StandardStrategy implements IProjectStrategy {
             if (val !== undefined) normalizedRow[dest] = val;
         });
 
-        // Fallback para Valor Consolidado
         if (normalizedRow["Valor Final R$"] === undefined) {
             const valConsolidado = findValueInRow(row, "Valor Consolidado") || findValueInRow(row, "Valor Consolidado R$");
-            if (valConsolidado !== undefined) {
-                normalizedRow["Valor Final R$"] = valConsolidado;
-            }
+            if (valConsolidado !== undefined) normalizedRow["Valor Final R$"] = valConsolidado;
         }
 
         // 3. Status
-        const statusRaw = String(
-            normalizedRow["Status"] ||
-            normalizedRow["Status Faturamento"] ||
-            normalizedRow["Status Pagamento"] ||
-            ""
-        ).trim();
+        const statusRaw = String(normalizedRow["Status"] || normalizedRow["Status Faturamento"] || normalizedRow["Status Pagamento"] || "").trim();
         const finalStatus = mapStatusStrict(statusRaw);
 
-        // 4. Data de Corte - Skip apenas se tiver cutoffDate definido
+        // 4. VERIFICAÇÃO DE DATA DE CORTE (Melhorada)
         const refDate = parseExcelDate(normalizedRow["Mês de Referência"] || normalizedRow["Referência"]);
 
         // Durante análise (sem cutoffDate), não skipamos
         if (context.cutoffDate) {
             const skipCheck = shouldSkipRow(refDate, context.cutoffDate, finalStatus);
-            if (skipCheck.shouldSkip) return null;
+            // ALTERAÇÃO: Retorna objeto especial se for pulado, em vez de null
+            if (skipCheck.shouldSkip) {
+                return { _skipped: true, reason: 'cutoff' };
+            }
         }
 
         // 5. Construção do Objeto Final
         const newRow: Record<string, any> = {};
         newRow["PROJETO"] = finalProj;
-
         FINAL_HEADERS.forEach(key => {
             if (key !== "PROJETO") newRow[key] = normalizedRow[key] !== undefined ? normalizedRow[key] : "";
         });
-
         newRow["Status"] = finalStatus;
 
         // 6. Validações Essenciais
         const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
         const dataEmissaoParsed = parseExcelDate(dataEmissaoRaw);
 
-        // Durante análise (projeto A Definir), ser mais permissivo para contar as linhas
+        // Se data inválida durante processamento real (não análise), conta como erro de validação
         if (finalProj !== 'A Definir') {
             if (!dataEmissaoParsed || isNaN(dataEmissaoParsed.getTime())) {
-                return null;
+                return { _skipped: true, reason: 'validation' };
             }
         }
 
-        if (!newRow["Instalação"] && !newRow["CNPJ/CPF"]) return null;
+        if (!newRow["Instalação"] && !newRow["CNPJ/CPF"]) {
+            return { _skipped: true, reason: 'validation' };
+        }
 
-        // 7. Normalizações e Formatações
+        // 7. Formatações
         if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = parseCurrency(normalizedRow["Crédito kWh"]);
         if (normalizedRow["ID Boleto/Pix"]) newRow["ID Boleto/Pix"] = String(normalizedRow["ID Boleto/Pix"]).trim();
-
         if (newRow["Instalação"]) newRow["Instalação"] = normalizeInstallation(newRow["Instalação"]);
         if (newRow["Distribuidora"]) newRow["Distribuidora"] = normalizeDistributor(newRow["Distribuidora"]);
-
         if (refDate) newRow["Mês de Referência"] = formatDateToBR(refDate);
         if (dataEmissaoParsed) newRow["Data de Emissão"] = formatDateToBR(dataEmissaoParsed);
 
@@ -151,15 +130,9 @@ export class StandardStrategy implements IProjectStrategy {
 
         const cSem = parseCurrency(newRow["Custo sem GD R$"]);
         const cCom = parseCurrency(newRow["Custo com GD R$"]);
-
         newRow["Custo sem GD R$"] = cSem;
         newRow["Custo com GD R$"] = cCom;
-
-        if (newRow["Valor Final R$"]) {
-            newRow["Valor Final R$"] = parseCurrency(newRow["Valor Final R$"]);
-        } else {
-            newRow["Valor Final R$"] = 0;
-        }
+        newRow["Valor Final R$"] = parseCurrency(newRow["Valor Final R$"] || 0);
 
         let ecoVal = newRow["Economia R$"];
         if (ecoVal && String(ecoVal).trim() !== "") {
@@ -176,7 +149,6 @@ export class StandardStrategy implements IProjectStrategy {
         // 8. Cálculo de Atraso e Risco
         let dias = 0;
         const statusPago = finalStatus === 'Pago';
-
         if (!statusPago) {
             dias = newRow["Dias Atrasados"] ? Number(newRow["Dias Atrasados"]) : calculateDaysLate(dataVencimento);
             if (isNaN(dias)) dias = calculateDaysLate(dataVencimento);
