@@ -9,7 +9,6 @@ import { IProjectStrategy, ProcessingContext } from './strategies/IProjectStrate
 const REQUIRED_ID_COLUMN = ['instalação', 'instalacao'];
 const FINANCIAL_TERMS = ['valor', 'custo', 'tarifa', 'total', 'referência', 'vencimento'];
 
-// Instancia as estratégias na ordem de prioridade
 const getStrategies = (): IProjectStrategy[] => [
     new EGSStrategy(),
     new EraVerdeStrategy(),
@@ -23,7 +22,7 @@ self.onmessage = async (e: MessageEvent) => {
         const workbook = XLSX.read(fileBuffer, { type: 'array' });
         const strategies = getStrategies();
 
-        // --- AÇÃO: ANALISAR (CONTAGEM POR PROJETO) ---
+        // --- AÇÃO: ANALISAR ---
         if (action === 'analyze') {
             const projectCounts: Record<string, number> = {};
 
@@ -31,7 +30,6 @@ self.onmessage = async (e: MessageEvent) => {
                 const sheet = workbook.Sheets[sheetName];
                 const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
-                // 1. Encontrar cabeçalho
                 let headerRowIndex = -1;
                 for (let i = 0; i < Math.min(rawData.length, 100); i++) {
                     const row = rawData[i];
@@ -45,31 +43,32 @@ self.onmessage = async (e: MessageEvent) => {
 
                 if (headerRowIndex === -1) return;
 
-                // 2. Ler TODAS as linhas para contagem exata
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
+                // Contagem total - passamos undefined para forçar detecção automática
                 sheetData.forEach(row => {
                     for (const strategy of strategies) {
-                        if (strategy.matches(row, manualCode)) {
-                            // Executa processamento leve para identificar o projeto exato (ex: EMG vs ESP)
-                            const result = strategy.process(row, { manualCode, fileName });
+                        if (strategy.matches(row, undefined)) {
+                            // Processamento "dry-run" sem cutoffDate para não filtrar
+                            const result = strategy.process(row, { manualCode: undefined, fileName });
+
                             if (result && result.PROJETO) {
                                 const proj = result.PROJETO;
                                 projectCounts[proj] = (projectCounts[proj] || 0) + 1;
-                                break; // Encontrou estratégia, passa para próxima linha
+                                break;
                             }
                         }
                     }
                 });
             });
 
-            // Retorna o objeto de contagem e lista de projetos para compatibilidade
+            // Retorna contagem e lista de projetos para compatibilidade
             const projects = Object.keys(projectCounts);
             self.postMessage({ success: true, projects, projectCounts });
             return;
         }
 
-        // --- AÇÃO: PROCESSAR (GERAR DADOS) ---
+        // --- AÇÃO: PROCESSAR ---
         if (action === 'process') {
             const processedRows: any[] = [];
             const stats = {
@@ -81,7 +80,7 @@ self.onmessage = async (e: MessageEvent) => {
                 skippedStatus: 0
             };
 
-            console.log(`[WORKER] Iniciando processamento: ${fileName}`);
+            console.log(`[WORKER] Iniciando processamento: ${fileName} | ManualCode: ${manualCode}`);
 
             const context: ProcessingContext = {
                 manualCode,
@@ -93,7 +92,6 @@ self.onmessage = async (e: MessageEvent) => {
                 const sheet = workbook.Sheets[sheetName];
                 const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1 }) as any[][];
 
-                // 1. Encontrar cabeçalho
                 let headerRowIndex = -1;
                 for (let i = 0; i < Math.min(rawData.length, 50); i++) {
                     const row = rawData[i];
@@ -109,11 +107,9 @@ self.onmessage = async (e: MessageEvent) => {
 
                 const sheetData = XLSX.utils.sheet_to_json(sheet, { range: headerRowIndex, defval: "" }) as any[];
 
-                // 2. Processar linhas
                 sheetData.forEach(row => {
                     stats.total++;
 
-                    // A) Encontra a estratégia correta
                     const strategy = strategies.find(s => s.matches(row, manualCode));
 
                     if (!strategy) {
@@ -121,7 +117,6 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    // B) Processa
                     const result = strategy.process(row, context);
 
                     if (!result) {
@@ -129,8 +124,11 @@ self.onmessage = async (e: MessageEvent) => {
                         return;
                     }
 
-                    // C) Se a estratégia validou e retornou um projeto, nós aceitamos.
-                    // Isso permite arquivos mistos (LNV+MTX ou EMG+ESP) sem perder dados.
+                    // Se resultado veio "A Definir" mas temos manualCode, sobrescreve
+                    if (result.PROJETO === 'A Definir' && manualCode) {
+                        result.PROJETO = manualCode;
+                    }
+
                     processedRows.push(result);
                     stats.processed++;
                 });

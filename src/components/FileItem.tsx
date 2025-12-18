@@ -25,29 +25,44 @@ const getBadgeColor = (project: string): string => {
         'LNV': 'bg-blue-100 text-blue-700 border-blue-200',
         'ALA': 'bg-cyan-100 text-cyan-700 border-cyan-200',
         'MTX': 'bg-rose-100 text-rose-700 border-rose-200',
+        'A Definir': 'bg-yellow-100 text-yellow-700 border-yellow-300',
     };
     return colors[project] || 'bg-gray-100 text-gray-700 border-gray-200';
 };
 
+// Lista de projetos para o ComboBox
+const PROJECT_OPTIONS = ['EGS', 'EMG', 'ESP', 'LNV', 'ALA', 'MTX'];
+
 const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, onRemove }) => {
+
+    // Verifica se tem linhas "A Definir" pendentes
+    const hasPendingLines = item.projectCounts && item.projectCounts['A Definir'] > 0;
 
     // Renderiza os badges de contagem por projeto
     const renderProjectCounts = () => {
         if (!item.projectCounts || Object.keys(item.projectCounts).length === 0) return null;
 
-        const entries = Object.entries(item.projectCounts).sort(([, a], [, b]) => b - a);
+        const entries = Object.entries(item.projectCounts).sort(([projA], [projB]) => {
+            // "A Definir" sempre primeiro para chamar atenção
+            if (projA === 'A Definir') return -1;
+            if (projB === 'A Definir') return 1;
+            return projB.localeCompare(projA);
+        });
         const totalLines = entries.reduce((sum, [, count]) => sum + count, 0);
 
         return (
             <div className="flex flex-wrap items-center gap-1.5 mt-2">
-                {entries.map(([proj, count]) => (
-                    <span
-                        key={proj}
-                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${getBadgeColor(proj)}`}
-                    >
-                        {proj}: <span className="font-black">{formatNumber(count)}</span>
-                    </span>
-                ))}
+                {entries.map(([proj, count]) => {
+                    const isPending = proj === 'A Definir';
+                    return (
+                        <span
+                            key={proj}
+                            className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${getBadgeColor(proj)} ${isPending ? 'animate-pulse' : ''}`}
+                        >
+                            {isPending ? '⚠️ Pendentes' : proj}: <span className="font-black">{formatNumber(count)}</span>
+                        </span>
+                    );
+                })}
                 <span className="text-[10px] text-gray-400 ml-1">
                     ({formatNumber(totalLines)} total)
                 </span>
@@ -58,18 +73,21 @@ const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, o
     return (
         <div className={`
             relative bg-white rounded-2xl p-4 flex items-center gap-4 shadow-sm border transition-all duration-200 
-            ${item.status === 'error' ? 'border-red-400 ring-2 ring-red-100' : 'border-gray-100 hover:shadow-md'}
+            ${item.status === 'error' ? 'border-red-400 ring-2 ring-red-100' : ''}
             ${item.status === 'processing' ? 'border-blue-400 ring-2 ring-blue-100' : ''}
+            ${hasPendingLines && item.status === 'idle' ? 'border-yellow-400 ring-2 ring-yellow-100' : 'border-gray-100 hover:shadow-md'}
         `}>
             {/* Ícone de Status */}
             <div className={`
                 w-10 h-10 rounded-full flex items-center justify-center shrink-0 transition-colors
-                ${item.status === 'idle' ? 'bg-gray-100 text-gray-400' : ''}
+                ${item.status === 'idle' && !hasPendingLines ? 'bg-gray-100 text-gray-400' : ''}
+                ${item.status === 'idle' && hasPendingLines ? 'bg-yellow-100 text-yellow-500' : ''}
                 ${item.status === 'processing' ? 'bg-blue-50 text-blue-500' : ''}
                 ${item.status === 'success' ? 'bg-[#00D655]/10 text-[#00D655]' : ''}
                 ${item.status === 'error' ? 'bg-red-100 text-red-500' : ''}
             `}>
-                {item.status === 'idle' && <Icon name="FileSpreadsheet" size={20} />}
+                {item.status === 'idle' && !hasPendingLines && <Icon name="FileSpreadsheet" size={20} />}
+                {item.status === 'idle' && hasPendingLines && <Icon name="AlertCircle" size={20} />}
                 {item.status === 'processing' && <div className="animate-spin"><Icon name="Loader2" size={20} /></div>}
                 {item.status === 'success' && <Icon name="Check" size={20} />}
                 {item.status === 'error' && <Icon name="AlertTriangle" size={20} />}
@@ -111,24 +129,30 @@ const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, o
                 </div>
 
                 <div className="flex flex-col items-end group">
-                    <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${!isCodeValid(item.manualCode) ? 'text-red-500' : 'text-gray-300 group-hover:text-[#00D655]'}`}>
-                        Sigla
+                    <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${!isCodeValid(item.manualCode) || hasPendingLines
+                            ? 'text-yellow-500'
+                            : 'text-gray-300 group-hover:text-[#00D655]'
+                        }`}>
+                        Projeto
                     </label>
-                    <input
-                        type="text"
-                        maxLength={3}
+                    {/* ComboBox em vez de input de texto */}
+                    <select
+                        value={item.manualCode || ''}
+                        onChange={e => onUpdateField(item.id, 'manualCode', e.target.value)}
+                        disabled={item.status === 'processing'}
                         className={`
-                            ios-input w-16 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none focus:bg-white
-                            ${!isCodeValid(item.manualCode)
-                                ? 'border-red-300 bg-red-50 text-red-800 placeholder-red-300 focus:border-red-500 focus:ring-red-200'
+                            ios-input w-20 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none focus:bg-white cursor-pointer
+                            ${!isCodeValid(item.manualCode) || hasPendingLines
+                                ? 'border-yellow-300 bg-yellow-50 text-yellow-800 focus:border-yellow-500'
                                 : 'border-gray-200 bg-gray-50 text-[#1D1D1F] focus:border-[#00D655]'
                             }
                         `}
-                        placeholder="???"
-                        value={item.manualCode}
-                        onChange={e => onUpdateField(item.id, 'manualCode', e.target.value)}
-                        title={!isCodeValid(item.manualCode) ? `Siglas válidas: ${VALID_PROJECT_CODES.join(', ')}` : ""}
-                    />
+                    >
+                        <option value="">???</option>
+                        {PROJECT_OPTIONS.map(opt => (
+                            <option key={opt} value={opt}>{opt}</option>
+                        ))}
+                    </select>
                 </div>
 
                 <button

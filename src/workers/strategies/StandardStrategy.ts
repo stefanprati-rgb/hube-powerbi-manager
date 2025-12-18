@@ -17,22 +17,14 @@ const findValueInRow = (rowObj: any, keyName: string) => {
     return actualKey ? rowObj[actualKey] : undefined;
 };
 
-// REMOVIDO: formatNumberToBR (Agora retornamos números puros para o Excel somar corretamente)
-
 const mapStatusStrict = (statusRaw: string): string => {
     const s = statusRaw.toLowerCase().trim();
-    if (!s) return 'Aberto'; // Se vazio, assume Aberto (antes retornava null e pulava a linha)
+    if (!s) return 'Aberto';
 
-    // 1. Negociados
     if (s.includes('quitado parc') || s.includes('negociado') || s.includes('acordo')) return 'Negociado';
-
-    // 2. Pagos
     if (s.includes('pago') || s.includes('quitado') || s.includes('liquidado') || s.includes('baixado')) return 'Pago';
-
-    // 3. Atrasados
     if (s.includes('atrasado') || s.includes('atraso') || s.includes('expirado') || s.includes('pendente')) return 'Atrasado';
 
-    // 4. Em Aberto (Status padrão para "A vencer", "Emitido", etc)
     return 'Aberto';
 };
 
@@ -40,17 +32,51 @@ export class StandardStrategy implements IProjectStrategy {
     name = 'STANDARD (LNV/ALA/MTX)';
 
     matches(row: any, manualCode?: string): boolean {
-        const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO") || manualCode;
-        const p = String(rawProj || "").trim().toUpperCase();
-        const mapped = PROJECT_MAPPING[p] || p;
-        return STANDARD_CODES.includes(mapped);
+        // 1. Tenta pelo código manual
+        if (manualCode && STANDARD_CODES.includes(manualCode)) return true;
+
+        // 2. Tenta pela coluna PROJETO
+        const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO");
+        if (rawProj) {
+            const p = String(rawProj).trim().toUpperCase();
+            const mapped = PROJECT_MAPPING[p] || p;
+            if (STANDARD_CODES.includes(mapped)) return true;
+        }
+
+        // 3. (NOVO) Detecção Genérica por Estrutura
+        // Se não tem coluna projeto, mas tem cara de planilha padrão (Instalação + Valor Final ou Valor Consolidado)
+        // Isso permite contar as linhas na análise antes do usuário selecionar o projeto.
+        const temInstalacao = findValueInRow(row, "Instalação") !== undefined;
+        const temValor = findValueInRow(row, "Valor Final R$") !== undefined ||
+            findValueInRow(row, "Valor Consolidado") !== undefined ||
+            findValueInRow(row, "Total calculado R$") !== undefined;
+
+        if (temInstalacao && temValor) {
+            return true;
+        }
+
+        return false;
     }
 
     process(row: any, context: ProcessingContext): any | null {
         // 1. Identificação do Projeto
-        const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO") || context.manualCode;
-        const p = String(rawProj || "").trim().toUpperCase();
-        const finalProj = PROJECT_MAPPING[p] || p;
+        let finalProj = '';
+
+        // Tenta pegar do manual
+        if (context.manualCode && STANDARD_CODES.includes(context.manualCode)) {
+            finalProj = context.manualCode;
+        } else {
+            // Tenta pegar da coluna
+            const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO");
+            const p = String(rawProj || "").trim().toUpperCase();
+            finalProj = PROJECT_MAPPING[p] || p;
+        }
+
+        // Se após tudo isso não tiver projeto (caso da análise genérica), retorna um placeholder
+        // O Worker vai usar isso para contar as linhas como "A Definir"
+        if (!finalProj || !STANDARD_CODES.includes(finalProj)) {
+            finalProj = 'A Definir';
+        }
 
         // 2. Mapeamento de Colunas
         const normalizedRow: any = { ...row };
@@ -59,8 +85,7 @@ export class StandardStrategy implements IProjectStrategy {
             if (val !== undefined) normalizedRow[dest] = val;
         });
 
-        // CORREÇÃO: Busca por "Valor Consolidado" se "Valor Final R$" não existir
-        // Isso resolve o problema de LNV/ALA com colunas novas
+        // Fallback para Valor Consolidado
         if (normalizedRow["Valor Final R$"] === undefined) {
             const valConsolidado = findValueInRow(row, "Valor Consolidado") || findValueInRow(row, "Valor Consolidado R$");
             if (valConsolidado !== undefined) {
@@ -75,15 +100,16 @@ export class StandardStrategy implements IProjectStrategy {
             normalizedRow["Status Pagamento"] ||
             ""
         ).trim();
-
-        // Alterado para não retornar NULL e perder linhas
         const finalStatus = mapStatusStrict(statusRaw);
 
-        // 4. Verificação de Data de Corte
+        // 4. Data de Corte - Skip apenas se tiver cutoffDate definido
         const refDate = parseExcelDate(normalizedRow["Mês de Referência"] || normalizedRow["Referência"]);
-        const skipCheck = shouldSkipRow(refDate, context.cutoffDate, finalStatus);
 
-        if (skipCheck.shouldSkip) return null;
+        // Durante análise (sem cutoffDate), não skipamos
+        if (context.cutoffDate) {
+            const skipCheck = shouldSkipRow(refDate, context.cutoffDate, finalStatus);
+            if (skipCheck.shouldSkip) return null;
+        }
 
         // 5. Construção do Objeto Final
         const newRow: Record<string, any> = {};
@@ -98,16 +124,17 @@ export class StandardStrategy implements IProjectStrategy {
         // 6. Validações Essenciais
         const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
         const dataEmissaoParsed = parseExcelDate(dataEmissaoRaw);
-        if (!dataEmissaoParsed || isNaN(dataEmissaoParsed.getTime())) {
-            // Se falhar data de emissão, tenta usar a de referência ou hoje para não perder a linha de cobrança
-            // (Comentado: manter rigoroso se for essencial, mas para "não perder linhas", relaxar é melhor)
-            return null;
+
+        // Durante análise (projeto A Definir), ser mais permissivo para contar as linhas
+        if (finalProj !== 'A Definir') {
+            if (!dataEmissaoParsed || isNaN(dataEmissaoParsed.getTime())) {
+                return null;
+            }
         }
 
         if (!newRow["Instalação"] && !newRow["CNPJ/CPF"]) return null;
 
         // 7. Normalizações e Formatações
-        // IMPORTANTE: Agora retornamos NÚMEROS (parseCurrency direto) ao invés de strings formatadas
         if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = parseCurrency(normalizedRow["Crédito kWh"]);
         if (normalizedRow["ID Boleto/Pix"]) newRow["ID Boleto/Pix"] = String(normalizedRow["ID Boleto/Pix"]).trim();
 
@@ -120,10 +147,8 @@ export class StandardStrategy implements IProjectStrategy {
         const dataVencimento = parseExcelDate(newRow["Vencimento"]);
         if (dataVencimento) newRow["Vencimento"] = formatDateToBR(dataVencimento);
 
-        // Desconto Padrão (Numérico)
         newRow["Desconto contrato (%)"] = 0;
 
-        // Cálculos Financeiros (Mantendo como Number)
         const cSem = parseCurrency(newRow["Custo sem GD R$"]);
         const cCom = parseCurrency(newRow["Custo com GD R$"]);
 
@@ -133,7 +158,6 @@ export class StandardStrategy implements IProjectStrategy {
         if (newRow["Valor Final R$"]) {
             newRow["Valor Final R$"] = parseCurrency(newRow["Valor Final R$"]);
         } else {
-            // Fallback se ainda estiver vazio
             newRow["Valor Final R$"] = 0;
         }
 
@@ -141,11 +165,9 @@ export class StandardStrategy implements IProjectStrategy {
         if (ecoVal && String(ecoVal).trim() !== "") {
             newRow["Economia R$"] = parseCurrency(ecoVal);
         } else {
-            // calculateEconomySafe retorna string, converter para float
             newRow["Economia R$"] = parseFloat(calculateEconomySafe(cCom, cSem));
         }
 
-        // Outros campos monetários (Tudo Number)
         ['Valor Bruto R$', 'Tarifa aplicada R$', 'Ajuste retroativo R$', 'Desconto extra',
             'Valor da cobrança R$', 'Valor Pago', 'Valor creditado R$'].forEach(field => {
                 if (newRow[field]) newRow[field] = parseCurrency(newRow[field]);
