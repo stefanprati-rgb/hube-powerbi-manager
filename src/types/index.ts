@@ -41,6 +41,8 @@ export interface FileQueueItem {
     cutoffDate: string;
     status: 'idle' | 'processing' | 'success' | 'error';
     errorMessage: string;
+    // Armazena a contagem de linhas por projeto (ex: { 'ESP': 150, 'EMG': 300 })
+    projectCounts?: Record<string, number>;
 }
 
 export interface ProcessResult {

@@ -67,23 +67,37 @@ function App() {
         for (const file of files) {
             try {
                 const buffer = await file.arrayBuffer();
-                const detectedProjects = await new Promise<string[]>((resolve) => {
+                const analysisResult = await new Promise<{ projects: string[], projectCounts: Record<string, number> }>((resolve) => {
                     const worker = new ExcelWorker();
                     worker.postMessage({ action: 'analyze', fileBuffer: buffer });
-                    worker.onmessage = (e) => { worker.terminate(); resolve(e.data.success ? e.data.projects : []); };
-                    worker.onerror = () => { worker.terminate(); resolve([]); };
+                    worker.onmessage = (e) => {
+                        worker.terminate();
+                        resolve(e.data.success
+                            ? { projects: e.data.projects || [], projectCounts: e.data.projectCounts || {} }
+                            : { projects: [], projectCounts: {} }
+                        );
+                    };
+                    worker.onerror = () => { worker.terminate(); resolve({ projects: [], projectCounts: {} }); };
                 });
 
-                if (detectedProjects.length > 0) {
-                    detectedProjects.forEach(proj => {
-                        newItems.push({
-                            file,
-                            id: Date.now() + Math.random(),
-                            manualCode: proj,
-                            targetProject: proj,
-                            cutoffDate: getInitialDate(proj),
-                            status: 'idle', errorMessage: ''
-                        });
+                const { projects, projectCounts } = analysisResult;
+
+                if (projects.length > 0) {
+                    // Ordena projetos por contagem (maior primeiro) para sugerir o principal
+                    const sortedProjects = Object.entries(projectCounts)
+                        .sort(([, a], [, b]) => b - a);
+                    const mainProject = sortedProjects.length > 0 ? sortedProjects[0][0] : projects[0];
+
+                    // Cria apenas 1 item por arquivo com a contagem detalhada
+                    newItems.push({
+                        file,
+                        id: Date.now() + Math.random(),
+                        manualCode: mainProject,
+                        targetProject: undefined, // Não filtramos mais por projeto
+                        cutoffDate: getInitialDate(mainProject),
+                        status: 'idle',
+                        errorMessage: '',
+                        projectCounts
                     });
                 } else {
                     // Genérico ou EGS sem coluna projeto
@@ -93,7 +107,9 @@ function App() {
                         manualCode: '',
                         targetProject: undefined,
                         cutoffDate: getInitialDate('DEFAULT'),
-                        status: 'idle', errorMessage: ''
+                        status: 'idle',
+                        errorMessage: '',
+                        projectCounts: {}
                     });
                 }
             } catch (e) {
@@ -103,14 +119,19 @@ function App() {
                     id: Date.now(),
                     manualCode: '',
                     cutoffDate: getInitialDate('DEFAULT'),
-                    status: 'idle', errorMessage: 'Erro na leitura'
+                    status: 'idle',
+                    errorMessage: 'Erro na leitura',
+                    projectCounts: {}
                 });
             }
         }
 
         setFileQueue(prev => [...prev, ...newItems]);
         setIsAnalyzing(false);
-        setUploadStatus(`${newItems.length} item(s) adicionado(s).`);
+        const totalLines = newItems.reduce((sum, item) =>
+            sum + Object.values(item.projectCounts || {}).reduce((a, b) => a + b, 0), 0
+        );
+        setUploadStatus(`${newItems.length} arquivo(s) | ${totalLines.toLocaleString()} linhas detectadas`);
     };
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent<HTMLDivElement>) => {

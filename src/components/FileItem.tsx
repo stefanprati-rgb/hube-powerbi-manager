@@ -7,12 +7,54 @@ import { VALID_PROJECT_CODES } from '../config/constants';
 interface FileItemProps {
     item: FileQueueItem;
     isCodeValid: (code: string) => boolean;
-    // Atualizado: Removemos 'egsFileType' pois não é mais necessário
     onUpdateField: (id: number, field: 'manualCode' | 'cutoffDate', value: string) => void;
     onRemove: (id: number) => void;
 }
 
+// Helper para formatar número com separadores
+const formatNumber = (num: number): string => {
+    return num.toLocaleString('pt-BR');
+};
+
+// Helper para cor do badge baseado no projeto
+const getBadgeColor = (project: string): string => {
+    const colors: Record<string, string> = {
+        'EGS': 'bg-purple-100 text-purple-700 border-purple-200',
+        'EMG': 'bg-green-100 text-green-700 border-green-200',
+        'ESP': 'bg-amber-100 text-amber-700 border-amber-200',
+        'LNV': 'bg-blue-100 text-blue-700 border-blue-200',
+        'ALA': 'bg-cyan-100 text-cyan-700 border-cyan-200',
+        'MTX': 'bg-rose-100 text-rose-700 border-rose-200',
+    };
+    return colors[project] || 'bg-gray-100 text-gray-700 border-gray-200';
+};
+
 const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, onRemove }) => {
+
+    // Renderiza os badges de contagem por projeto
+    const renderProjectCounts = () => {
+        if (!item.projectCounts || Object.keys(item.projectCounts).length === 0) return null;
+
+        const entries = Object.entries(item.projectCounts).sort(([, a], [, b]) => b - a);
+        const totalLines = entries.reduce((sum, [, count]) => sum + count, 0);
+
+        return (
+            <div className="flex flex-wrap items-center gap-1.5 mt-2">
+                {entries.map(([proj, count]) => (
+                    <span
+                        key={proj}
+                        className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${getBadgeColor(proj)}`}
+                    >
+                        {proj}: <span className="font-black">{formatNumber(count)}</span>
+                    </span>
+                ))}
+                <span className="text-[10px] text-gray-400 ml-1">
+                    ({formatNumber(totalLines)} total)
+                </span>
+            </div>
+        );
+    };
+
     return (
         <div className={`
             relative bg-white rounded-2xl p-4 flex items-center gap-4 shadow-sm border transition-all duration-200 
@@ -37,21 +79,20 @@ const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, o
             <div className="flex-1 min-w-0">
                 <h3 className={`text-sm font-semibold truncate ${item.status === 'error' ? 'text-red-600' : 'text-[#1D1D1F]'}`}>
                     {item.file.name}
-                    {item.targetProject && (
-                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-xs font-bold bg-blue-100 text-blue-700 border border-blue-200">
-                            {item.targetProject}
-                        </span>
-                    )}
                 </h3>
+
+                {/* Badges de Contagem por Projeto */}
+                {renderProjectCounts()}
+
                 {item.status === 'error' ? (
-                    <p className="text-xs text-red-500 font-bold mt-0.5 animate-pulse">
+                    <p className="text-xs text-red-500 font-bold mt-1 animate-pulse">
                         {item.errorMessage}
                     </p>
-                ) : (
-                    <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider">
+                ) : !item.projectCounts || Object.keys(item.projectCounts).length === 0 ? (
+                    <p className="text-[10px] text-gray-400 uppercase font-bold tracking-wider mt-1">
                         {(item.file.size / 1024).toFixed(0)} KB
                     </p>
-                )}
+                ) : null}
             </div>
 
             {/* Controles */}
