@@ -2,7 +2,6 @@
 import React from 'react';
 import Icon from './Icon';
 import { FileQueueItem } from '../types';
-import { VALID_PROJECT_CODES } from '../config/constants';
 
 interface FileItemProps {
     item: FileQueueItem;
@@ -38,6 +37,14 @@ const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, o
     // Verifica se tem linhas "A Definir" pendentes
     const hasPendingLines = item.projectCounts && item.projectCounts['A Definir'] > 0;
 
+    // LÓGICA DE EXIBIÇÃO DO COMBO BOX
+    // Só mostramos o select se:
+    // 1. Não houver contagem de projetos (ainda não analisou)
+    // 2. OU se houver linhas "A Definir" (Pendentes)
+    const showProjectSelect = !item.projectCounts ||
+        Object.keys(item.projectCounts).length === 0 ||
+        Object.keys(item.projectCounts).includes('A Definir');
+
     // Renderiza os badges de contagem por projeto
     const renderProjectCounts = () => {
         if (!item.projectCounts || Object.keys(item.projectCounts).length === 0) return null;
@@ -59,7 +66,7 @@ const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, o
                             key={proj}
                             className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-bold border ${getBadgeColor(proj)} ${isPending ? 'animate-pulse' : ''}`}
                         >
-                            {isPending ? '⚠️ Pendentes' : proj}: <span className="font-black">{formatNumber(count)}</span>
+                            {isPending ? 'Pendentes' : proj}: <span className="font-black">{formatNumber(count)}</span>
                         </span>
                     );
                 })}
@@ -128,32 +135,34 @@ const FileItem: React.FC<FileItemProps> = ({ item, isCodeValid, onUpdateField, o
                     />
                 </div>
 
-                <div className="flex flex-col items-end group">
-                    <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${!isCodeValid(item.manualCode) || hasPendingLines
-                            ? 'text-yellow-500'
-                            : 'text-gray-300 group-hover:text-[#00D655]'
-                        }`}>
-                        Projeto
-                    </label>
-                    {/* ComboBox em vez de input de texto */}
-                    <select
-                        value={item.manualCode || ''}
-                        onChange={e => onUpdateField(item.id, 'manualCode', e.target.value)}
-                        disabled={item.status === 'processing'}
-                        className={`
-                            ios-input w-20 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none focus:bg-white cursor-pointer
-                            ${!isCodeValid(item.manualCode) || hasPendingLines
-                                ? 'border-yellow-300 bg-yellow-50 text-yellow-800 focus:border-yellow-500'
-                                : 'border-gray-200 bg-gray-50 text-[#1D1D1F] focus:border-[#00D655]'
-                            }
-                        `}
-                    >
-                        <option value="">???</option>
-                        {PROJECT_OPTIONS.map(opt => (
-                            <option key={opt} value={opt}>{opt}</option>
-                        ))}
-                    </select>
-                </div>
+                {/* Renderização Condicional do ComboBox */}
+                {showProjectSelect && (
+                    <div className="flex flex-col items-end group">
+                        <label className={`text-[9px] font-bold uppercase mb-0.5 mr-1 transition-colors ${!isCodeValid(item.manualCode) || hasPendingLines
+                                ? 'text-yellow-500'
+                                : 'text-gray-300 group-hover:text-[#00D655]'
+                            }`}>
+                            Projeto
+                        </label>
+                        <select
+                            value={item.manualCode || ''}
+                            onChange={e => onUpdateField(item.id, 'manualCode', e.target.value)}
+                            disabled={item.status === 'processing'}
+                            className={`
+                                ios-input w-20 p-1.5 text-center uppercase font-bold text-xs rounded-lg border outline-none focus:bg-white cursor-pointer
+                                ${!isCodeValid(item.manualCode) || hasPendingLines
+                                    ? 'border-yellow-300 bg-yellow-50 text-yellow-800 focus:border-yellow-500'
+                                    : 'border-gray-200 bg-gray-50 text-[#1D1D1F] focus:border-[#00D655]'
+                                }
+                            `}
+                        >
+                            <option value="">???</option>
+                            {PROJECT_OPTIONS.map(opt => (
+                                <option key={opt} value={opt}>{opt}</option>
+                            ))}
+                        </select>
+                    </div>
+                )}
 
                 <button
                     onClick={() => onRemove(item.id)}
