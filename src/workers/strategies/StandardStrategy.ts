@@ -51,20 +51,31 @@ export class StandardStrategy implements IProjectStrategy {
     }
 
     process(row: any, context: ProcessingContext): any | null {
-        // 1. Identificação do Projeto
+        // --- ALTERAÇÃO IMPORTANTE: Prioridade para a Coluna ---
         let finalProj = '';
-        if (context.manualCode && STANDARD_CODES.includes(context.manualCode)) {
-            finalProj = context.manualCode;
-        } else {
-            const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO");
-            const p = String(rawProj || "").trim().toUpperCase();
-            finalProj = PROJECT_MAPPING[p] || p;
-        }
-        if (!finalProj || !STANDARD_CODES.includes(finalProj)) {
-            finalProj = 'A Definir';
+
+        // 1. Tenta pegar da coluna PRIMEIRO
+        const rawProj = findValueInRow(row, "Projeto") || findValueInRow(row, "PROJETO");
+        if (rawProj) {
+            const p = String(rawProj).trim().toUpperCase();
+            const mapped = PROJECT_MAPPING[p] || p;
+
+            // Se o projeto na linha for válido (seja Standard ou até mesmo EGS/EMG misturado), usamos ele.
+            if (STANDARD_CODES.includes(mapped) || ['EGS', 'EMG', 'ESP'].includes(mapped)) {
+                finalProj = mapped;
+            }
         }
 
-        // 2. Mapeamento de Colunas
+        // 2. Se não achou na coluna, usa o Manual/Contexto (Fallback)
+        if (!finalProj && context.manualCode && STANDARD_CODES.includes(context.manualCode)) {
+            finalProj = context.manualCode;
+        }
+
+        // 3. Se ainda assim não tiver, marca para revisão
+        if (!finalProj) finalProj = 'A Definir';
+
+        // --- FIM DA ALTERAÇÃO ---
+
         const normalizedRow: any = { ...row };
         Object.entries(EGS_MAPPING).forEach(([orig, dest]) => {
             const val = findValueInRow(row, orig);
@@ -76,58 +87,49 @@ export class StandardStrategy implements IProjectStrategy {
             if (valConsolidado !== undefined) normalizedRow["Valor Final R$"] = valConsolidado;
         }
 
-        // 3. Status
         const statusRaw = String(normalizedRow["Status"] || normalizedRow["Status Faturamento"] || normalizedRow["Status Pagamento"] || "").trim();
         const finalStatus = mapStatusStrict(statusRaw);
 
-        // 4. VERIFICAÇÃO DE DATA DE CORTE (Melhorada)
+        // Verificação de Data de Corte
         const refDate = parseExcelDate(normalizedRow["Mês de Referência"] || normalizedRow["Referência"]);
+        const skipCheck = shouldSkipRow(refDate, context.cutoffDate, finalStatus);
 
-        // Durante análise (sem cutoffDate), não skipamos
-        if (context.cutoffDate) {
-            const skipCheck = shouldSkipRow(refDate, context.cutoffDate, finalStatus);
-            // ALTERAÇÃO: Retorna objeto especial se for pulado, em vez de null
-            if (skipCheck.shouldSkip) {
-                return { _skipped: true, reason: 'cutoff' };
-            }
+        if (skipCheck.shouldSkip) {
+            return { _skipped: true, reason: 'cutoff' };
         }
 
-        // 5. Construção do Objeto Final
         const newRow: Record<string, any> = {};
         newRow["PROJETO"] = finalProj;
+
         FINAL_HEADERS.forEach(key => {
             if (key !== "PROJETO") newRow[key] = normalizedRow[key] !== undefined ? normalizedRow[key] : "";
         });
+
         newRow["Status"] = finalStatus;
 
-        // 6. Validações Essenciais
+        // Validações
         const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
         const dataEmissaoParsed = parseExcelDate(dataEmissaoRaw);
 
-        // Se data inválida durante processamento real (não análise), conta como erro de validação
-        if (finalProj !== 'A Definir') {
-            if (!dataEmissaoParsed || isNaN(dataEmissaoParsed.getTime())) {
-                return { _skipped: true, reason: 'validation' };
-            }
+        if (!dataEmissaoParsed || isNaN(dataEmissaoParsed.getTime())) {
+            return { _skipped: true, reason: 'validation' };
         }
 
         if (!newRow["Instalação"] && !newRow["CNPJ/CPF"]) {
             return { _skipped: true, reason: 'validation' };
         }
 
-        // 7. Formatações
+        // Formatações
         if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = parseCurrency(normalizedRow["Crédito kWh"]);
         if (normalizedRow["ID Boleto/Pix"]) newRow["ID Boleto/Pix"] = String(normalizedRow["ID Boleto/Pix"]).trim();
         if (newRow["Instalação"]) newRow["Instalação"] = normalizeInstallation(newRow["Instalação"]);
         if (newRow["Distribuidora"]) newRow["Distribuidora"] = normalizeDistributor(newRow["Distribuidora"]);
         if (refDate) newRow["Mês de Referência"] = formatDateToBR(refDate);
         if (dataEmissaoParsed) newRow["Data de Emissão"] = formatDateToBR(dataEmissaoParsed);
-
         const dataVencimento = parseExcelDate(newRow["Vencimento"]);
         if (dataVencimento) newRow["Vencimento"] = formatDateToBR(dataVencimento);
 
         newRow["Desconto contrato (%)"] = 0;
-
         const cSem = parseCurrency(newRow["Custo sem GD R$"]);
         const cCom = parseCurrency(newRow["Custo com GD R$"]);
         newRow["Custo sem GD R$"] = cSem;
@@ -146,7 +148,6 @@ export class StandardStrategy implements IProjectStrategy {
                 if (newRow[field]) newRow[field] = parseCurrency(newRow[field]);
             });
 
-        // 8. Cálculo de Atraso e Risco
         let dias = 0;
         const statusPago = finalStatus === 'Pago';
         if (!statusPago) {
