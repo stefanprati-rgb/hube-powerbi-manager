@@ -225,7 +225,7 @@ function App() {
             } catch (e) { console.error("Erro nuvem", e); }
         }
 
-        if (!hasErrors) setUploadStatus(`Fatura consolidada! ${allData.length} cooperados prontos`);
+        if (!hasErrors) setUploadStatus(`Relatório consolidado! ${allData.length} cooperados prontos`);
         else setUploadStatus('Ops! Alguns medidores falharam');
 
         setProcessedData(allData);
@@ -302,12 +302,12 @@ function App() {
                 <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-10">
                     <div className={`flex items-center gap-3 px-4 py-2 rounded-full shadow-sm border transition-colors ${processedData.length === 0 && fileQueue.some(f => f.status === 'error') ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-100 text-gray-600'}`}>
                         <Icon name="Info" size={16} />
-                        <span className="text-sm font-medium">{uploadStatus || 'Pronto para faturar'}</span>
+                        <span className="text-sm font-medium">{uploadStatus || 'Pronto para processar'}</span>
                         {isProcessing && <span className="ml-2 text-xs font-bold bg-blue-100 text-blue-600 px-2 py-1 rounded">{processProgress.current}/{processProgress.total}</span>}
                     </div>
                     <div className="flex gap-3">
                         <button onClick={runBatch} disabled={isProcessing || isAnalyzing || fileQueue.length === 0} className="group px-6 py-3 rounded-xl font-bold text-white bg-[#1D1D1F] hover:bg-black disabled:bg-gray-300 transition-all shadow-lg hover:shadow-xl flex items-center gap-2">
-                            {isProcessing ? <><Icon name="Loader2" className="animate-spin" size={18} /> Gerando faturas...</> : <>Gerar Fatura <Icon name="Play" size={18} /></>}
+                            {isProcessing ? <><Icon name="Loader2" className="animate-spin" size={18} /> Gerando relatório...</> : <>Gerar Relatório <Icon name="Play" size={18} /></>}
                         </button>
                         {processedData.length > 0 && (
                             <button onClick={handleExport} className="px-6 py-3 rounded-xl font-bold text-white bg-[#00D655] hover:bg-[#00c24e] transition-all shadow-lg hover:shadow-xl flex items-center gap-2 animate-fade-in-up">
