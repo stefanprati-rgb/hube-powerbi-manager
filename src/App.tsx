@@ -59,7 +59,7 @@ function App() {
     const addFilesToQueue = async (files: File[]) => {
         if (!files.length) return;
         setIsAnalyzing(true);
-        setUploadStatus(`A analisar ${files.length} ficheiro(s)...`);
+        setUploadStatus(`⚡ Medindo a carga de ${files.length} arquivo(s)...`);
 
         const newItems: FileQueueItem[] = [];
         await new Promise(resolve => setTimeout(resolve, 50));
@@ -131,7 +131,7 @@ function App() {
         const totalLines = newItems.reduce((sum, item) =>
             sum + Object.values(item.projectCounts || {}).reduce((a, b) => a + b, 0), 0
         );
-        setUploadStatus(`${newItems.length} arquivo(s) | ${totalLines.toLocaleString()} linhas detectadas`);
+        setUploadStatus(`💡 Carga identificada! ${newItems.length} arquivo(s) com ${totalLines.toLocaleString()} registros`);
     };
 
     const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement> | React.DragEvent<HTMLDivElement>) => {
@@ -172,7 +172,7 @@ function App() {
 
         setIsProcessing(true);
         setProcessProgress({ current: 0, total: fileQueue.length });
-        setUploadStatus('A processar...');
+        setUploadStatus('⚡ Compensando energia...');
 
         const allData: ProcessedRow[] = [...processedData];
         let hasErrors = false;
@@ -225,8 +225,8 @@ function App() {
             } catch (e) { console.error("Erro nuvem", e); }
         }
 
-        if (!hasErrors) setUploadStatus(`Concluído! ${allData.length} linhas.`);
-        else setUploadStatus('Concluído com erros.');
+        if (!hasErrors) setUploadStatus(`🎉 Fatura consolidada! ${allData.length} cooperados prontos`);
+        else setUploadStatus('😅 Ops! Alguns medidores falharam');
 
         setProcessedData(allData);
         setCurrentFileName('');
@@ -244,7 +244,7 @@ function App() {
     const onDragOver = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(true); }, []);
     const onDragLeave = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); }, []);
     const onDrop = useCallback((e: React.DragEvent) => { e.preventDefault(); setIsDragOver(false); addFilesToQueue(normalizeFiles(e.dataTransfer.files)); }, [validExtensions]);
-    const clearAll = () => { if (confirm('Limpar tudo?')) { setFileQueue([]); setProcessedData([]); setUploadStatus(''); } };
+    const clearAll = () => { if (confirm('🔌 Desligar tudo?')) { setFileQueue([]); setProcessedData([]); setUploadStatus(''); } };
 
     return (
         <div className="min-h-screen pb-20 relative bg-[#F5F5F7]">
@@ -270,12 +270,12 @@ function App() {
                     {isAnalyzing ? (
                         <div className="flex flex-col items-center animate-pulse">
                             <div className="animate-spin mb-4 text-[#00D655]"><Icon name="Loader2" size={40} /></div>
-                            <h3 className="text-lg font-bold text-gray-800">A analisar ficheiros...</h3>
+                            <h3 className="text-lg font-bold text-gray-800">📊 Lendo o medidor...</h3>
                         </div>
                     ) : (
                         <>
                             <div className="w-16 h-16 bg-white rounded-2xl shadow-sm border border-gray-100 flex items-center justify-center mb-4 group-hover:scale-110 transition-transform"><Icon name="UploadCloud" size={32} className="text-blue-500" /></div>
-                            <h3 className="text-xl font-bold text-gray-900 mb-2">{fileQueue.length > 0 ? 'Arrastar mais arquivos' : 'Arraste seus arquivos aqui'}</h3>
+                            <h3 className="text-xl font-bold text-gray-900 mb-2">{fileQueue.length > 0 ? '📊 Mais planilhas? Pode trazer!' : '⚡ Solte seus kWh de dados aqui'}</h3>
                         </>
                     )}
                 </div>
@@ -302,12 +302,12 @@ function App() {
                 <div className="flex flex-col md:flex-row gap-4 items-center justify-between mb-10">
                     <div className={`flex items-center gap-3 px-4 py-2 rounded-full shadow-sm border transition-colors ${processedData.length === 0 && fileQueue.some(f => f.status === 'error') ? 'bg-red-50 border-red-200 text-red-600' : 'bg-white border-gray-100 text-gray-600'}`}>
                         <Icon name="Info" size={16} />
-                        <span className="text-sm font-medium">{uploadStatus || 'Aguardando...'}</span>
+                        <span className="text-sm font-medium">{uploadStatus || '⚡ Pronto para faturar'}</span>
                         {isProcessing && <span className="ml-2 text-xs font-bold bg-blue-100 text-blue-600 px-2 py-1 rounded">{processProgress.current}/{processProgress.total}</span>}
                     </div>
                     <div className="flex gap-3">
                         <button onClick={runBatch} disabled={isProcessing || isAnalyzing || fileQueue.length === 0} className="group px-6 py-3 rounded-xl font-bold text-white bg-[#1D1D1F] hover:bg-black disabled:bg-gray-300 transition-all shadow-lg hover:shadow-xl flex items-center gap-2">
-                            {isProcessing ? <><Icon name="Loader2" className="animate-spin" size={18} /> Processando...</> : <>Processar Lista <Icon name="Play" size={18} /></>}
+                            {isProcessing ? <><Icon name="Loader2" className="animate-spin" size={18} /> Gerando faturas... 💡</> : <>Gerar Fatura ⚡ <Icon name="Play" size={18} /></>}
                         </button>
                         {processedData.length > 0 && (
                             <button onClick={handleExport} className="px-6 py-3 rounded-xl font-bold text-white bg-[#00D655] hover:bg-[#00c24e] transition-all shadow-lg hover:shadow-xl flex items-center gap-2 animate-fade-in-up">
