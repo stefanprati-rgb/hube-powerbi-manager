@@ -25,7 +25,7 @@ const ProcessingIndicator: React.FC<ProcessingIndicatorProps> = ({ current, tota
 
                 {/* Title */}
                 <h3 className="text-xl font-bold text-gray-900 text-center mb-2">
-                    A processar...
+                    Gerando faturas...
                 </h3>
 
                 {/* File Name */}
