@@ -9,7 +9,6 @@ export const parseExcelDate = (dateVal: any): Date | null => {
     // 2. Se for número (Serial do Excel)
     if (typeof dateVal === 'number') {
         // Excel base date: December 30, 1899
-        // Ajuste básico para UTC para evitar problemas de fuso horário (-3h) ao converter
         const utc_days = Math.floor(dateVal - 25569);
         const utc_value = utc_days * 86400;
         return new Date(utc_value * 1000);
@@ -18,10 +17,23 @@ export const parseExcelDate = (dateVal: any): Date | null => {
     // 3. Se for String
     const s = String(dateVal).trim();
 
+    // CORREÇÃO: String que é apenas número (Excel Serial como string)
+    // Ex: "45658" -> Janeiro/2025
+    if (s.match(/^\d{5,}$/)) {
+        const serial = parseFloat(s);
+        if (!isNaN(serial) && serial > 25000 && serial < 60000) {
+            // Range válido de datas Excel (1968 a 2064)
+            const utc_days = Math.floor(serial - 25569);
+            const utc_value = utc_days * 86400;
+            return new Date(utc_value * 1000);
+        }
+    }
+
     // Suporte para ISO YYYY-MM-DD (Comum em exportações de banco/sistemas novos)
     if (s.match(/^\d{4}-\d{2}-\d{2}/)) {
-        // Ex: 2025-11-17
-        const [y, m, d] = s.split('-').map(Number);
+        // Ex: 2025-11-17 ou 2025-11-17T00:00:00
+        const datePart = s.split('T')[0];
+        const [y, m, d] = datePart.split('-').map(Number);
         return new Date(y, m - 1, d);
     }
 
@@ -36,7 +48,9 @@ export const parseExcelDate = (dateVal: any): Date | null => {
         return new Date(fullYear, m, d);
     }
 
-    return null;
+    // Fallback: tentar parse nativo
+    const parsed = new Date(dateVal);
+    return isNaN(parsed.getTime()) ? null : parsed;
 };
 
 export const formatDateToBR = (date: Date): string => {
