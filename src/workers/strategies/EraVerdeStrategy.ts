@@ -94,7 +94,8 @@ export class EraVerdeStrategy implements IProjectStrategy {
         const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
         const dataEmissaoParsed = parseExcelDate(dataEmissaoRaw);
 
-        if (!dataEmissaoParsed || isNaN(dataEmissaoParsed.getTime())) return null;
+        // CORREÇÃO: Não descartar linhas sem Data de Emissão
+        // Algumas linhas não possuem esta data preenchida
         if (!newRow["Instalação"] && !newRow["CNPJ/CPF"]) return null;
 
         // --- FORMATAÇÃO NUMÉRICA (FLOAT) ---

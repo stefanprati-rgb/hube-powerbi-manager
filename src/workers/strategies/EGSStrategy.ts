@@ -84,7 +84,8 @@ export class EGSStrategy implements IProjectStrategy {
         const dataEmissaoRaw = normalizedRow["Data de Emissão"] || normalizedRow["Data emissão"];
         const dataEmissaoParsed = parseExcelDate(dataEmissaoRaw);
 
-        if (!dataEmissaoParsed || isNaN(dataEmissaoParsed.getTime())) return null;
+        // CORREÇÃO: Não descartar linhas sem Data de Emissão
+        // Muitas linhas EGS não possuem esta data preenchida
 
         // --- FORMATAÇÃO NUMÉRICA (FLOAT) ---
         if (normalizedRow["Crédito kWh"]) newRow["Crédito kWh"] = parseCurrency(normalizedRow["Crédito kWh"]);
