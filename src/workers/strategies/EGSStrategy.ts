@@ -37,15 +37,23 @@ export class EGSStrategy implements IProjectStrategy {
     }
 
     process(row: any, context: ProcessingContext): any | null {
-        // --- FILTROS ESPECÍFICOS EGS (RELAXADOS) ---
-
-        // CORREÇÃO: O filtro "statusFat === aprovado" foi removido.
-        // Ele estava descartando todas as linhas que não tinham faturamento explicitamente aprovado,
-        // o que causava a perda de ~300 linhas.
+        // --- FILTROS ESPECÍFICOS EGS (REGRA DO USUÁRIO) ---
+        // Conforme usuário Isa:
+        // 1. Status Faturamento = SOMENTE "Aprovado" (whitelist)
+        // 2. Status Pagamento = Exclui "Cancelado" E "Não faturado"
 
         const statusPag = String(findValueInRow(row, "Status Pagamento") || "").toLowerCase().trim();
-        // Mantemos apenas o filtro de cancelados explícitos
-        if (statusPag.includes('cancelado')) return null;
+        const statusFat = String(findValueInRow(row, "Status Faturamento") || "").toLowerCase().trim();
+
+        // Filtro 1: Status Faturamento DEVE ser "Aprovado"
+        if (!statusFat.includes('aprovado')) {
+            return null;
+        }
+
+        // Filtro 2: Status Pagamento NÃO pode ser "Cancelado" nem "Não faturado"
+        if (statusPag.includes('cancelado') || statusPag.includes('não faturado')) {
+            return null;
+        }
 
         // --- MAPEAMENTO ---
         const normalizedRow: any = { ...row };
