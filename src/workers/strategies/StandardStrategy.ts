@@ -129,7 +129,10 @@ export class StandardStrategy implements IProjectStrategy {
         const dataVencimento = parseExcelDate(newRow["Vencimento"]);
         if (dataVencimento) newRow["Vencimento"] = formatDateToBR(dataVencimento);
 
-        newRow["Desconto contrato (%)"] = 0;
+        if (!newRow["Desconto contrato (%)"]) newRow["Desconto contrato (%)"] = 0;
+        if (typeof newRow["Desconto contrato (%)"] === 'string') {
+            newRow["Desconto contrato (%)"] = parseCurrency(newRow["Desconto contrato (%)"]);
+        }
         const cSem = parseCurrency(newRow["Custo sem GD R$"]);
         const cCom = parseCurrency(newRow["Custo com GD R$"]);
         newRow["Custo sem GD R$"] = cSem;
